@@ -5,11 +5,13 @@ Page Pipeline CFO - Synchronisation Asana → Google Sheets.
 import streamlit as st
 import pandas as pd
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 import logging
 
 from core.asana_client import AsanaClient, AsanaClientError
 from core.sheets_sync import GoogleSheetsSync, SheetsSyncError
+from core.scheduler import SyncScheduler
 
 # Configuration logging
 logging.basicConfig(level=logging.INFO)
@@ -201,3 +203,90 @@ else:
 
     if st.session_state.last_sync:
         st.caption(f"Dernière sync: {st.session_state.last_sync}")
+
+st.divider()
+
+# === Synchronisation automatique ===
+st.header("4. Synchronisation automatique")
+
+# Initialiser le scheduler dans session_state
+if 'scheduler' not in st.session_state:
+    st.session_state.scheduler = SyncScheduler()
+
+scheduler = st.session_state.scheduler
+status = scheduler.get_status()
+
+
+def run_auto_sync():
+    """Fonction de sync pour le scheduler."""
+    try:
+        asana_client = AsanaClient(asana_token)
+        tasks = asana_client.get_project_tasks(asana_project_gid)
+        if tasks:
+            df = parse_tasks_to_dataframe(tasks)
+            syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
+            syncer.sync_with_logging(df, 'Pipeline')
+    except Exception as e:
+        logger.error(f"Erreur sync auto: {e}")
+        raise
+
+
+# Configurer la fonction de sync
+scheduler.set_sync_function(run_auto_sync)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    # Toggle activation
+    enabled = st.toggle("Activer la sync automatique", value=status['enabled'])
+    if enabled != status['enabled']:
+        if enabled:
+            scheduler.enable()
+            st.success("Sync automatique activée")
+        else:
+            scheduler.disable()
+            st.info("Sync automatique désactivée")
+        st.rerun()
+
+with col2:
+    if status['enabled']:
+        # Sélecteur fréquence
+        freq_options = {"daily": "Quotidien", "weekly": "Hebdomadaire"}
+        current_freq = status['frequency']
+        new_freq = st.selectbox(
+            "Fréquence",
+            options=list(freq_options.keys()),
+            format_func=lambda x: freq_options[x],
+            index=0 if current_freq == "daily" else 1
+        )
+        if new_freq != current_freq:
+            scheduler.set_frequency(new_freq)
+            st.rerun()
+
+# Heure d'exécution
+if status['enabled']:
+    current_time = status['time']
+    new_time = st.time_input(
+        "Heure d'exécution",
+        value=datetime.strptime(current_time, "%H:%M").time() if current_time else datetime.strptime("09:00", "%H:%M").time()
+    )
+    new_time_str = new_time.strftime("%H:%M")
+    if new_time_str != current_time:
+        scheduler.set_time(new_time_str)
+        st.rerun()
+
+# Statut
+if status['enabled']:
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if status['next_run']:
+            st.info(f"⏰ **Prochain sync:** {status['next_run']}")
+        else:
+            st.warning("Prochain sync: non planifié")
+    with col2:
+        if status['last_run']:
+            if status['last_status'] == 'success':
+                st.success(f"✅ Dernier sync: {status['last_run']}")
+            else:
+                st.error(f"❌ Dernier sync: {status['last_run']} - {status['last_status']}")
