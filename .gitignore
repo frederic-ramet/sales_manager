@@ -11,7 +11,10 @@ data/
 *.json
 
 # Credentials
+credentials/
 config/google_service_account.json
+*.json
+!package.json
 
 # IDE
 .vscode/
