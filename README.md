@@ -1,151 +1,90 @@
-# Dashboard Pipeline CFO
+# Sales Ops Portal - Genie Factory
 
-Synchronisation automatique Asana → Google Sheets pour le pilotage financier du pipeline commercial.
+Portail de gestion commerciale pour l'équipe Sales & Finance.
 
-## Fonctionnalités
-
-- Extraction des deals depuis un projet Asana
-- Calcul des métriques financières (revenue pondéré, marge, scénarios)
-- Synchronisation vers Google Sheets (4 onglets)
-- Interface Streamlit pour déclencher la sync
-
-## Installation
+## Lancement
 
 ```bash
-# Cloner le repo
-git clone <repo-url>
-cd sales_manager
-
-# Créer un environnement virtuel
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
-
-# Installer les dépendances
+# Installation
 pip install -r requirements.txt
-```
 
-## Configuration
-
-### 1. Copier le fichier d'environnement
-
-```bash
+# Configuration
 cp .env.example .env
-```
+# Éditer .env avec vos credentials
 
-### 2. Configuration Asana
-
-1. Créez un **Personal Access Token** sur https://app.asana.com/0/my-apps
-2. Copiez le token dans `.env` → `ASANA_ACCESS_TOKEN`
-3. Récupérez le GID du projet Sales Pipeline (visible dans l'URL Asana)
-4. Copiez-le dans `.env` → `ASANA_PROJECT_GID`
-
-### 3. Configuration Google Sheets
-
-1. Créez un **Service Account** sur Google Cloud Console
-2. Activez l'API Google Sheets
-3. Téléchargez le fichier JSON des credentials
-4. Placez-le à la racine du projet (ex: `credentials.json`)
-5. Mettez à jour `.env` → `GOOGLE_CREDENTIALS_PATH`
-6. Créez un Google Sheet et partagez-le avec l'email du Service Account
-7. Copiez l'URL du Sheet dans `.env` → `GOOGLE_SPREADSHEET_URL`
-
-### 4. Custom Fields Asana
-
-Le projet Asana doit avoir ces custom fields :
-
-| Field | Type | Description |
-|-------|------|-------------|
-| Client | Text | Nom du client |
-| Projet | Text | Nom du projet |
-| Estimated value | Number | Budget en € |
-| Marge/Bénéfice | Number | Marge en € |
-| Mois de facturation prévu | Date | Date de facturation prévue |
-| Confidence Score | Number (1-5) | Niveau de confiance |
-
-## Utilisation
-
-```bash
-# Lancer l'interface Streamlit
+# Lancement
 streamlit run app.py
 ```
 
-L'interface s'ouvre sur http://localhost:8501
+L'application s'ouvre sur http://localhost:8501
 
-### Workflow
+---
 
-1. Vérifiez la configuration dans la sidebar
-2. Testez les connexions Asana et Google Sheets
-3. Cliquez sur "Synchroniser maintenant"
-4. Vérifiez les résultats dans le Google Sheet
+## Modules disponibles
 
-## Onglets Google Sheets
+| Module | Description | Documentation |
+|--------|-------------|---------------|
+| 📊 Pipeline CFO | Synchronisation Asana → Google Sheets | [Voir doc](docs/pages/pipeline_cfo.md) |
+| 🎯 Recherche Leads | Recherche et enrichissement de leads B2B | [Voir doc](docs/pages/recherche_leads.md) |
+| 📜 Historique Leads | Consultation des leads exportés | [Voir doc](docs/pages/historique_leads.md) |
+| 🔄 GetSales Sync | Sync leads LinkedIn → HubSpot | [Voir doc](docs/pages/getsales_sync.md) |
 
-| Onglet | Description |
-|--------|-------------|
-| Pipeline complet | Tous les deals avec métriques |
-| Scénario conservateur | Deals avec confidence ≥ 4 (70%+) |
-| Scénario probable | Deals avec confidence ≥ 3 (50%+) |
-| Config | Métadonnées et résumé de la sync |
+---
 
-## Calculs
+## Configuration requise
 
-### Mapping Confidence → Probabilité
-
-| Confidence | Probabilité |
-|------------|-------------|
-| 5 | 90% |
-| 4 | 70% |
-| 3 | 50% |
-| 2 | 25% |
-| 1 | 10% |
-
-### Métriques calculées
-
-- **Revenue pondéré** = Budget × Probabilité
-- **Marge %** = Marge / Budget × 100
-- **Marge pondérée** = Marge × Probabilité
-
-## Tests
+### Variables d'environnement (.env)
 
 ```bash
-# Lancer les tests
-pytest tests/ -v
+# === Pipeline CFO ===
+ASANA_ACCESS_TOKEN=xxx          # Token API Asana
+ASANA_PROJECT_GID=xxx           # ID du projet Sales Pipeline
+GOOGLE_CREDENTIALS_PATH=credentials/service-account.json
+GOOGLE_SPREADSHEET_URL=xxx      # URL du Google Sheet
 
-# Avec couverture
-pytest tests/ --cov=core
+# === Lead Scraper ===
+PAPPERS_API_KEY=xxx             # API Pappers (enrichissement)
+HUBSPOT_API_KEY=xxx             # API HubSpot (CRM)
+ANTHROPIC_API_KEY=xxx           # Claude AI (recherche NL)
+
+# === GetSales Sync ===
+GETSALES_API_KEY=xxx            # API GetSales.io
 ```
+
+### Fichiers credentials
+
+```
+credentials/
+└── service-account.json    # Service Account Google (pour Sheets)
+```
+
+---
 
 ## Structure du projet
 
 ```
 sales_manager/
-├── app.py                 # Interface Streamlit
-├── config.py              # Configuration centralisée
-├── core/
-│   ├── asana_client.py    # Client API Asana
-│   ├── pipeline.py        # Logique métier et calculs
-│   └── sheets_sync.py     # Sync Google Sheets
-├── tests/
-│   ├── test_asana_client.py
-│   └── test_pipeline.py
-├── .env.example
-├── requirements.txt
-└── README.md
+├── app.py                      # Page d'accueil
+├── pages/
+│   ├── 1_📊_Pipeline_CFO.py
+│   ├── 2_🎯_Recherche_Leads.py
+│   ├── 3_📜_Historique_Leads.py
+│   └── 4_🔄_GetSales_Sync.py
+├── core/                       # Module Dashboard CFO
+├── modules/
+│   ├── lead_scraper/           # Module Lead Scraper
+│   └── getsales/               # Module GetSales Sync
+├── docs/pages/                 # Documentation utilisateur
+└── .specify/                   # Spécifications techniques
 ```
 
-## Troubleshooting
+---
 
-### Erreur "Spreadsheet not found"
-- Vérifiez que le Service Account a accès au Sheet (partage avec l'email du SA)
+## Support
 
-### Erreur "Rate limit"
-- L'API Asana limite à 1500 req/min. Le client gère automatiquement les retries.
+- Documentation technique : `.specify/README.md`
+- Specs détaillées : `.specify/specs/`
 
-### Custom fields non récupérés
-- Vérifiez les noms exacts des custom fields dans Asana
-- Les alias supportés sont listés dans `core/pipeline.py`
+---
 
-## Licence
-
-Propriétaire - Genie Factory
+Genie Factory - Sales Ops Portal
