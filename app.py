@@ -73,6 +73,32 @@ with col2:
 
     st.page_link("pages/2_🎯_Recherche_Leads.py", label="Ouvrir Lead Scraper", icon="🎯")
 
+# --- Module 3: GetSales Sync ---
+st.divider()
+col3, col4 = st.columns(2)
+
+with col3:
+    st.subheader("🔄 GetSales Sync")
+    st.markdown("Synchronisation leads LinkedIn → HubSpot")
+
+    # Vérifier la config
+    getsales_ok = bool(os.getenv('GETSALES_API_KEY'))
+    hubspot_sync_ok = bool(os.getenv('HUBSPOT_API_KEY'))
+
+    if getsales_ok and hubspot_sync_ok:
+        st.success("✅ Configuré")
+    elif getsales_ok:
+        st.warning("⚠️ HubSpot non configuré (déduplication désactivée)")
+    elif hubspot_sync_ok:
+        st.warning("⚠️ GetSales non configuré")
+    else:
+        st.error("❌ Non configuré")
+
+    st.page_link("pages/4_🔄_GetSales_Sync.py", label="Ouvrir GetSales Sync", icon="🔄")
+
+with col4:
+    st.empty()  # Placeholder pour futurs modules
+
 st.divider()
 
 # === Liens rapides ===
