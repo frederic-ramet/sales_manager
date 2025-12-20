@@ -3,12 +3,12 @@ Interface Streamlit - Dashboard Pipeline CFO.
 """
 
 import streamlit as st
+import pandas as pd
 import os
 from dotenv import load_dotenv
 import logging
 
 from core.asana_client import AsanaClient, AsanaClientError
-from core.pipeline import PipelineCalculator
 from core.sheets_sync import GoogleSheetsSync, SheetsSyncError
 
 # Configuration logging
@@ -31,16 +31,67 @@ st.markdown("Synchronisation Asana → Google Sheets pour le pilotage financier"
 # Initialiser le state
 if 'last_sync' not in st.session_state:
     st.session_state.last_sync = None
-if 'preview_df' not in st.session_state:
-    st.session_state.preview_df = None
-if 'preview_summary' not in st.session_state:
-    st.session_state.preview_summary = None
+if 'raw_tasks' not in st.session_state:
+    st.session_state.raw_tasks = None
 
 # Charger config depuis .env
 asana_token = os.getenv('ASANA_ACCESS_TOKEN', '')
 asana_project_gid = os.getenv('ASANA_PROJECT_GID', '')
 gsheet_url = os.getenv('GOOGLE_SPREADSHEET_URL', '')
 google_creds_path = os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials/service-account.json')
+
+
+def get_custom_field(task, field_name):
+    """Extrait la valeur d'un custom field par son nom."""
+    for cf in task.get('custom_fields', []):
+        if cf.get('name') == field_name:
+            # Selon le type, récupérer la bonne valeur
+            cf_type = cf.get('type')
+            if cf_type == 'number':
+                return cf.get('number_value')
+            elif cf_type == 'enum':
+                enum_val = cf.get('enum_value')
+                return enum_val.get('name') if enum_val else None
+            elif cf_type == 'text':
+                return cf.get('text_value')
+            else:
+                return cf.get('display_value')
+    return None
+
+
+def parse_tasks_to_dataframe(tasks):
+    """Convertit les tasks Asana en DataFrame avec le mapping défini."""
+    rows = []
+    for task in tasks:
+        # Section (from memberships)
+        section = None
+        memberships = task.get('memberships', [])
+        if memberships:
+            section_data = memberships[0].get('section', {})
+            section = section_data.get('name') if section_data else None
+
+        # Assignee
+        assignee = task.get('assignee', {})
+        owner = assignee.get('name') if assignee else None
+
+        row = {
+            'Id': task.get('gid'),
+            'Name': task.get('name'),
+            'Owner': owner,
+            'Section': section,
+            'Budget': get_custom_field(task, 'Estimated value'),
+            'Status': get_custom_field(task, 'Lead status'),
+            'Priority': get_custom_field(task, 'Priority'),
+            'Next Steps': get_custom_field(task, 'Next Steps (Sales)'),
+            'Source': get_custom_field(task, 'Source'),
+            'DocSuivi': get_custom_field(task, 'Link Sheets'),
+            'Proba': get_custom_field(task, 'Confidence Score'),
+            'Due': task.get('due_on'),
+            'Modified': task.get('modified_at'),
+        }
+        rows.append(row)
+
+    return pd.DataFrame(rows)
 
 
 # === Tests de connexion ===
@@ -84,7 +135,6 @@ with col2:
                 error_msg = str(e)
                 st.error(f"**Erreur Google Sheets:** {error_msg}")
 
-                # Lire l'email du service account pour l'afficher
                 try:
                     import json
                     with open(google_creds_path) as f:
@@ -113,30 +163,64 @@ else:
                 if not tasks:
                     st.warning("Aucun deal trouvé dans le projet Asana.")
                 else:
-                    # Sauvegarder les données brutes
                     st.session_state.raw_tasks = tasks
                     st.success(f"**{len(tasks)} tasks** récupérées depuis Asana")
 
             except AsanaClientError as e:
                 st.error(f"**Erreur Asana:** {e}")
 
-    # Afficher les données brutes si disponibles
-    if 'raw_tasks' in st.session_state and st.session_state.raw_tasks:
+    # Afficher les données si disponibles
+    if st.session_state.raw_tasks:
         tasks = st.session_state.raw_tasks
 
-        st.subheader(f"📋 {len(tasks)} tasks récupérées")
+        # Créer le DataFrame
+        df = parse_tasks_to_dataframe(tasks)
 
-        # Afficher chaque task en JSON
-        for i, task in enumerate(tasks):
-            with st.expander(f"Task {i+1}: {task.get('name', 'Sans nom')}"):
-                st.json(task)
+        st.subheader(f"📋 {len(df)} tasks")
+
+        # Afficher le tableau
+        st.dataframe(df, use_container_width=True)
+
+        # Données brutes (debug)
+        with st.expander("🔍 Voir les données JSON brutes"):
+            for i, task in enumerate(tasks):
+                with st.expander(f"Task {i+1}: {task.get('name', 'Sans nom')}"):
+                    st.json(task)
 
 st.divider()
 
 # === Synchronisation ===
 st.header("3. Synchronisation vers Google Sheets")
 
-st.info("🚧 Section à finaliser après validation du mapping des données Asana")
+config_ok = all([asana_token, asana_project_gid, gsheet_url, google_creds_path])
+creds_exist = os.path.exists(google_creds_path) if google_creds_path else False
+
+if not config_ok:
+    st.warning("⚠️ Configuration incomplète.")
+elif not creds_exist:
+    st.warning(f"⚠️ Fichier credentials introuvable: `{google_creds_path}`")
+elif not st.session_state.raw_tasks:
+    st.info("👆 Récupérez d'abord les données Asana (section 2)")
+else:
+    if st.button("🔄 Synchroniser vers Google Sheets", type="primary"):
+        with st.spinner("Synchronisation en cours..."):
+            try:
+                df = parse_tasks_to_dataframe(st.session_state.raw_tasks)
+
+                syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
+                result = syncer.sync_pipeline({'Pipeline': df})
+
+                if result.success:
+                    st.session_state.last_sync = result.timestamp
+                    st.success(f"**{len(df)} lignes** synchronisées vers Google Sheets")
+                else:
+                    st.error(f"Erreur: {result.error}")
+
+            except SheetsSyncError as e:
+                st.error(f"**Erreur Google Sheets:** {e}")
+
+    if st.session_state.last_sync:
+        st.caption(f"Dernière sync: {st.session_state.last_sync}")
 
 
 # === Footer ===
