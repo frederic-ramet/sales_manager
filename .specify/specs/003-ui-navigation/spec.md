@@ -2,138 +2,133 @@
 
 ## Vision
 
-Créer une interface unifiée et intuitive pour naviguer entre les différents modules du portail Sales Ops.
+Interface unifiée pour naviguer entre les modules du portail Sales Ops, basée sur le pattern multi-page Streamlit existant dans leadscraper.
 
 ## Contexte
 
-### Situation actuelle
-- Module 1 (Dashboard CFO) : `app.py` standalone
-- Module 2 (Lead Scraper) : à intégrer
-- Pas de navigation entre modules
+### Pattern existant (leadscraper)
+L'app à migrer utilise déjà Streamlit multi-page :
+```
+app.py                              # Page principale
+pages/
+  1_⚙️_Admin.py                    # Configuration APIs
+  2_📊_Historique.py               # Extractions passées
+  3_📋_Mes_Leads_HubSpot.py        # Contacts CRM
+  4_🔍_Lookalike.py                # Recherche similaires
+  ...
+```
 
 ### Objectif
-Restructurer l'UI pour avoir :
-- Une page d'accueil avec vue d'ensemble
-- Navigation claire entre les modules
-- Cohérence visuelle
+Réutiliser ce pattern pour unifier Dashboard CFO + Lead Scraper dans une navigation cohérente.
+
+---
+
+## Architecture Cible
+
+```
+app.py                              # Page d'accueil / Dashboard global
+pages/
+  # Module 1 : Dashboard CFO
+  1_📊_Pipeline_CFO.py             # Sync Asana → Sheets (app.py actuel)
+
+  # Module 2 : Lead Scraper
+  2_🎯_Recherche_Leads.py          # Recherche SIRENE + enrichissement
+  3_📋_Mes_Leads.py                # Contacts HubSpot
+  4_🔍_Lookalike.py                # Recherche similaires
+  5_📜_Historique_Leads.py         # Extractions passées
+
+  # Admin / Config
+  9_⚙️_Parametres.py              # Configuration globale APIs
+```
 
 ---
 
 ## User Stories
 
-### US-3.1 : Navigation principale
+### US-3.1 : Page d'accueil
 **En tant qu'** utilisateur
-**Je veux** naviguer facilement entre les modules
-**Afin de** accéder rapidement aux outils dont j'ai besoin
-
-**Critères d'acceptation :**
-- [ ] Sidebar avec menu des modules
-- [ ] Icônes distinctives par module
-- [ ] Indication du module actif
-- [ ] Navigation fluide (pas de rechargement complet)
-
----
-
-### US-3.2 : Page d'accueil
-**En tant qu'** utilisateur
-**Je veux** voir un dashboard d'accueil avec les infos clés
+**Je veux** voir un dashboard récapitulatif
 **Afin de** avoir une vue d'ensemble rapide
 
 **Critères d'acceptation :**
-- [ ] Statut de chaque module (dernière sync, nb leads, etc.)
-- [ ] Raccourcis vers actions fréquentes
-- [ ] Notifications/alertes si problème
+- [ ] Statut Dashboard CFO (dernière sync, nb deals)
+- [ ] Statut Lead Scraper (nb leads, dernière extraction)
+- [ ] Raccourcis vers actions principales
+- [ ] Alertes si erreur de config
 
 ---
 
-### US-3.3 : Cohérence visuelle
+### US-3.2 : Navigation intégrée
 **En tant qu'** utilisateur
-**Je veux** une interface cohérente entre les modules
-**Afin de** avoir une expérience utilisateur fluide
+**Je veux** naviguer entre les modules facilement
+**Afin de** passer d'un outil à l'autre sans friction
 
 **Critères d'acceptation :**
-- [ ] Header commun avec logo/titre
-- [ ] Palette de couleurs cohérente
-- [ ] Composants UI réutilisables
-- [ ] Messages d'erreur/succès standardisés
+- [ ] Sidebar Streamlit native (pages/)
+- [ ] Icônes distinctives par module
+- [ ] Regroupement logique (CFO / Leads / Admin)
+- [ ] Indication visuelle du module actif
 
 ---
 
-## Architecture Streamlit
+### US-3.3 : Configuration centralisée
+**En tant qu'** admin
+**Je veux** configurer toutes les APIs au même endroit
+**Afin de** simplifier la maintenance
 
-```
-app.py                    # Point d'entrée + routing
-pages/
-  __init__.py
-  home.py                 # Page d'accueil / dashboard
-  pipeline_cfo.py         # Module 1 : Dashboard CFO
-  lead_scraper.py         # Module 2 : Lead Scraper
-components/
-  __init__.py
-  sidebar.py              # Navigation sidebar
-  header.py               # Header commun
-  notifications.py        # Système de notifications
-```
-
-### Option : Streamlit Multi-page Apps
-
-Utiliser la fonctionnalité native de Streamlit :
-```
-pages/
-  1_Dashboard_CFO.py
-  2_Lead_Scraper.py
-  3_Settings.py
-```
-
-Avantage : navigation automatique dans la sidebar.
+**Critères d'acceptation :**
+- [ ] Page Paramètres unique regroupant :
+  - Asana (PAT, Project GID)
+  - Google Sheets (Service Account)
+  - Pappers (API Key)
+  - HubSpot (Private App Token)
+  - Anthropic (API Key) - optionnel
+- [ ] Test de connexion pour chaque API
+- [ ] Sauvegarde dans .env ou config.json
 
 ---
 
-## Maquettes
+## Stratégie de Migration
 
-### Sidebar
-```
-┌─────────────────────┐
-│  🏭 Sales Ops       │
-│  Genie Factory      │
-├─────────────────────┤
-│  📊 Dashboard CFO   │  <- Module 1
-│  🎯 Lead Scraper    │  <- Module 2
-│  ⚙️  Paramètres     │
-├─────────────────────┤
-│  Dernière sync:     │
-│  2024-01-15 14:30   │
-└─────────────────────┘
-```
+### Étape 1 : Restructurer app.py actuel
+1. Renommer `app.py` → `pages/1_📊_Pipeline_CFO.py`
+2. Créer nouveau `app.py` (page d'accueil)
+3. Vérifier que la navigation fonctionne
 
-### Page d'accueil
-```
-┌─────────────────────────────────────┐
-│  Bienvenue sur Sales Ops            │
-├─────────────────────────────────────┤
-│  ┌─────────┐  ┌─────────┐           │
-│  │ CFO     │  │ Leads   │           │
-│  │ 45 deals│  │ 120     │           │
-│  │ ✅ Sync │  │ 15 new  │           │
-│  └─────────┘  └─────────┘           │
-├─────────────────────────────────────┤
-│  Actions rapides:                   │
-│  [Sync maintenant] [Import leads]   │
-└─────────────────────────────────────┘
-```
+### Étape 2 : Intégrer pages leadscraper
+1. Migrer les pages depuis `_to_migrate_leadscraper/pages/`
+2. Renommer avec numérotation cohérente
+3. Adapter les imports
+
+### Étape 3 : Page Admin unifiée
+1. Fusionner config CFO + config Leadscraper
+2. Créer `pages/9_⚙️_Parametres.py`
+
+---
+
+## Composants Réutilisables
+
+### Depuis leadscraper (à conserver)
+- Pattern de numérotation pages (`1_emoji_Nom.py`)
+- Session state pour partage données entre pages
+- Structure config.py centralisée
+
+### À créer
+- `components/status_card.py` - Carte statut module
+- `components/api_tester.py` - Test connexion API générique
 
 ---
 
 ## Dépendances
 
-- Streamlit >= 1.28 (pour multi-page apps natif)
-- Pas de dépendance externe supplémentaire
+- Streamlit >= 1.28 (multi-page natif)
+- Aucune dépendance externe supplémentaire
 
 ---
 
 ## Hors Scope (v1)
 
+- Thème personnalisé / mode sombre
+- Responsive mobile
 - Authentification utilisateur
-- Personnalisation du thème
-- Mode sombre
-- Responsive mobile (desktop first)
+- Breadcrumbs / fil d'Ariane
