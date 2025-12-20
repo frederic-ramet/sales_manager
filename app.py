@@ -113,113 +113,30 @@ else:
                 if not tasks:
                     st.warning("Aucun deal trouvé dans le projet Asana.")
                 else:
-                    calculator = PipelineCalculator(tasks)
-                    df = calculator.parse_tasks_to_dataframe()
-                    df = calculator.calculate_metrics()
-                    summary = calculator.get_summary_metrics()
-
-                    # Sauvegarder dans session state
-                    st.session_state.preview_df = df
-                    st.session_state.preview_summary = summary
-
-                    st.success(f"**{len(df)} deals** récupérés depuis Asana")
+                    # Sauvegarder les données brutes
+                    st.session_state.raw_tasks = tasks
+                    st.success(f"**{len(tasks)} tasks** récupérées depuis Asana")
 
             except AsanaClientError as e:
                 st.error(f"**Erreur Asana:** {e}")
 
-    # Afficher les données si disponibles
-    if st.session_state.preview_df is not None:
-        df = st.session_state.preview_df
-        summary = st.session_state.preview_summary
+    # Afficher les données brutes si disponibles
+    if 'raw_tasks' in st.session_state and st.session_state.raw_tasks:
+        tasks = st.session_state.raw_tasks
 
-        # Métriques
-        st.subheader("📈 Résumé")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Deals", summary.get('total_deals', 0))
-        m2.metric("Budget Total", f"{summary.get('total_budget', 0):,.0f} €")
-        m3.metric("Revenue Pondéré", f"{summary.get('total_revenue_pondere', 0):,.0f} €")
-        m4.metric("Marge Totale", f"{summary.get('total_marge', 0):,.0f} €")
+        st.subheader(f"📋 {len(tasks)} tasks récupérées")
 
-        # Tableau des données
-        st.subheader("📋 Détail des deals")
-
-        # Sélectionner les colonnes à afficher
-        display_cols = ['titre', 'client', 'projet', 'budget', 'marge', 'confidence_score',
-                       'probabilite_pct', 'revenue_pondere', 'section', 'mois']
-        available_cols = [c for c in display_cols if c in df.columns]
-
-        st.dataframe(df[available_cols], use_container_width=True)
-
-        # Données brutes (debug)
-        with st.expander("🔍 Voir toutes les colonnes (debug)"):
-            st.dataframe(df, use_container_width=True)
+        # Afficher chaque task en JSON
+        for i, task in enumerate(tasks):
+            with st.expander(f"Task {i+1}: {task.get('name', 'Sans nom')}"):
+                st.json(task)
 
 st.divider()
 
 # === Synchronisation ===
 st.header("3. Synchronisation vers Google Sheets")
 
-# Vérification config
-config_ok = all([asana_token, asana_project_gid, gsheet_url, google_creds_path])
-creds_exist = os.path.exists(google_creds_path) if google_creds_path else False
-
-if not config_ok:
-    st.warning("⚠️ Configuration incomplète. Éditez le fichier `.env` avec vos identifiants.")
-elif not creds_exist:
-    st.warning(f"⚠️ Fichier credentials introuvable: `{google_creds_path}`")
-elif st.session_state.preview_df is None:
-    st.info("👆 Récupérez d'abord les données Asana (section 2)")
-else:
-    col1, col2 = st.columns([1, 3])
-
-    with col1:
-        sync_button = st.button(
-            "🔄 Synchroniser maintenant",
-            type="primary",
-            use_container_width=True
-        )
-
-    with col2:
-        if st.session_state.last_sync:
-            st.info(f"Dernière sync: {st.session_state.last_sync}")
-
-    if sync_button:
-        progress = st.progress(0, text="Initialisation...")
-
-        try:
-            df = st.session_state.preview_df
-
-            # Préparer les données pour Sheets
-            progress.progress(30, text="Préparation des données...")
-            calculator = PipelineCalculator([])  # Dummy init
-            calculator.df = df
-            sheets_data = calculator.prepare_sheets_data()
-
-            # Sync Google Sheets
-            progress.progress(60, text="Synchronisation vers Google Sheets...")
-            syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
-            result = syncer.sync_pipeline(sheets_data)
-
-            progress.progress(100, text="Terminé!")
-
-            if result.success:
-                st.session_state.last_sync = result.timestamp
-                st.success(f"Synchronisation réussie! **{result.total_rows} lignes** envoyées vers Google Sheets.")
-                st.caption(f"Onglets mis à jour: {', '.join(result.sheets_updated)}")
-            else:
-                st.error(f"Erreur lors de la sync: {result.error}")
-
-            progress.empty()
-
-        except SheetsSyncError as e:
-            progress.empty()
-            st.error(f"**Erreur Google Sheets:** {e}")
-            logger.error(f"Erreur Sheets: {e}")
-
-        except Exception as e:
-            progress.empty()
-            st.error(f"**Erreur inattendue:** {e}")
-            logger.exception("Erreur inattendue")
+st.info("🚧 Section à finaliser après validation du mapping des données Asana")
 
 
 # === Footer ===
