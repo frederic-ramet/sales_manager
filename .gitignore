@@ -1,0 +1,27 @@
+# Environment
+.env
+venv/
+env/
+*.pyc
+__pycache__/
+
+# Data & Cache
+data/
+*.db
+*.json
+
+# Credentials
+config/google_service_account.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
