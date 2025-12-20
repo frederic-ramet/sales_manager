@@ -59,13 +59,19 @@ with col2:
     # Vérifier la config
     pappers_ok = bool(os.getenv('PAPPERS_API_KEY'))
     hubspot_ok = bool(os.getenv('HUBSPOT_API_KEY'))
-
-    st.info("🚧 Module en cours de migration")
+    anthropic_ok = bool(os.getenv('ANTHROPIC_API_KEY'))
 
     if pappers_ok:
-        st.caption("✅ Pappers configuré")
+        st.success("✅ Pappers configuré")
+    else:
+        st.warning("⚠️ Pappers non configuré (enrichissement désactivé)")
+
     if hubspot_ok:
         st.caption("✅ HubSpot configuré")
+    if anthropic_ok:
+        st.caption("✅ Claude AI configuré (recherche NL)")
+
+    st.page_link("pages/2_🎯_Recherche_Leads.py", label="Ouvrir Lead Scraper", icon="🎯")
 
 st.divider()
 
