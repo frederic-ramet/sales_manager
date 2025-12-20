@@ -142,14 +142,52 @@
 
 ---
 
-## Phase 2 : Automatisation & Monitoring (Futur)
+## Phase 2 : Automatisation
 
-### T2.1 - Sync automatique
-- [ ] Script cron ou scheduler Python
-- [ ] Logs structurés (fichier + optionnel Streamlit)
-- [ ] Alertes en cas d'échec (email ou Slack)
+### T2.1 - Scheduler de sync automatique
+**Durée** : 4h
+**Priorité** : 🟠 Haute
 
-### T2.2 - Amélioration UX
+- [ ] Installer APScheduler (`pip install apscheduler`)
+- [ ] Créer `core/scheduler.py` avec :
+  - Classe `SyncScheduler` wrappant APScheduler
+  - Méthodes `start()`, `stop()`, `set_frequency()`
+  - Job de sync qui appelle `sync_with_logging()`
+- [ ] Créer `config/scheduler_config.json` pour persister :
+  - `enabled`: bool
+  - `frequency`: "daily" | "weekly"
+  - `time`: "HH:MM"
+  - `last_run`: timestamp
+  - `next_run`: timestamp
+- [ ] Logs des exécutions dans l'onglet "Log" du Sheet
+
+**Fichiers** : `core/scheduler.py`, `config/scheduler_config.json`
+**Dépend de** : T1.4
+
+---
+
+### T2.2 - UI Scheduler
+**Durée** : 2h
+**Priorité** : 🟠 Haute
+
+- [ ] Section "Synchronisation automatique" dans app.py :
+  - Toggle Actif / Inactif
+  - Sélecteur fréquence (Quotidien / Hebdomadaire)
+  - Sélecteur heure d'exécution
+  - Affichage "Prochain sync : {date}"
+  - Affichage "Dernier sync auto : {date} - {status}"
+- [ ] Sauvegarde config au changement
+- [ ] Démarrage scheduler au lancement de l'app
+
+**Fichiers** : `app.py`
+**Dépend de** : T2.1
+
+---
+
+### T2.3 - Amélioration UX (Optionnel)
+**Durée** : 3h
+**Priorité** : 🟢 Basse
+
 - [ ] Historique des syncs (table SQLite)
 - [ ] Graphiques Streamlit (CA par trimestre, etc.)
 - [ ] Filtres interactifs dans l'UI

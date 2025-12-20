@@ -70,17 +70,37 @@ Créer le **Module 1 : Dashboard Pipeline CFO** qui :
 ---
 
 ### US-1.4 : Interface d'administration
-**En tant qu'** admin technique  
-**Je veux** configurer les connexions et déclencher les syncs  
+**En tant qu'** admin technique
+**Je veux** configurer les connexions et déclencher les syncs
 **Afin de** maintenir le système
 
 **Critères d'acceptation :**
-- [ ] Page Streamlit simple avec :
+- [x] Page Streamlit simple avec :
   - Configuration Asana (PAT, Project GID)
   - Configuration Google Sheets (Service Account, Sheet URL)
   - Test de connexion pour chaque API
   - Bouton "Sync maintenant"
   - Affichage dernière sync et statut
+
+---
+
+### US-1.5 : Synchronisation automatique
+**En tant que** CFO
+**Je veux** que la sync se fasse automatiquement (quotidienne ou hebdomadaire)
+**Afin de** avoir des données toujours à jour sans intervention manuelle
+
+**Critères d'acceptation :**
+- [ ] Scheduler configurable (quotidien / hebdomadaire)
+- [ ] Activation/désactivation depuis l'UI
+- [ ] Choix de la fréquence depuis l'UI
+- [ ] Indicateur du prochain sync prévu
+- [ ] Log des syncs automatiques (succès/échec)
+- [ ] Persistance de la configuration (fichier ou DB)
+
+**Implémentation technique :**
+- APScheduler pour le scheduling en background
+- Stockage config dans fichier JSON ou SQLite
+- Thread séparé pour ne pas bloquer l'UI Streamlit
 
 ---
 
