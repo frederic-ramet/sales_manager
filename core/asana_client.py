@@ -69,7 +69,8 @@ class AsanaClient:
             Informations sur l'utilisateur connecté
         """
         try:
-            me = self.users_api.get_user('me', opt_fields=['name', 'email'])
+            opts = {'opt_fields': 'name,email'}
+            me = self.users_api.get_user('me', opts)
             data = me.to_dict() if hasattr(me, 'to_dict') else me
             return {
                 'gid': data.get('gid'),
