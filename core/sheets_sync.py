@@ -60,9 +60,14 @@ class GoogleSheetsSync:
         except FileNotFoundError:
             raise SheetsSyncError(f"Fichier credentials introuvable: {credentials_path}")
         except gspread.exceptions.SpreadsheetNotFound:
-            raise SheetsSyncError("Spreadsheet introuvable. Vérifiez l'URL et les permissions.")
+            raise SheetsSyncError("Spreadsheet introuvable. Vérifiez l'URL et que le Sheet est partagé avec le Service Account.")
+        except gspread.exceptions.APIError as e:
+            raise SheetsSyncError(f"Erreur API Google: {e.response.text}")
+        except ValueError as e:
+            raise SheetsSyncError(f"Fichier credentials invalide: {e}")
         except Exception as e:
-            raise SheetsSyncError(f"Erreur connexion Google Sheets: {e}")
+            error_type = type(e).__name__
+            raise SheetsSyncError(f"{error_type}: {e}")
 
     def test_connection(self) -> Dict:
         """
