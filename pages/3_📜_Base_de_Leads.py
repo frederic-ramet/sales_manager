@@ -6,7 +6,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-from modules.lead_scraper import LeadTracker
+from modules.lead_scraper import ContactManager
 
 st.title("📜 Base de Leads")
 st.markdown("Hub central de tous vos leads (SIRENE, HubSpot, GetSales)")
@@ -21,9 +21,9 @@ def load_documentation():
         return "Documentation non disponible."
 
 
-# Initialiser le tracker
-tracker = LeadTracker()
-stats = tracker.get_stats()
+# Initialiser le gestionnaire de contacts
+contact_manager = ContactManager()
+stats = contact_manager.get_stats()
 
 # Stats globales avec sources
 st.subheader("📈 Vue d'ensemble")
@@ -98,29 +98,31 @@ with tab1:
         source_filter = None if filter_source == "Toutes" else filter_source
         search_filter = search_term if search_term else None
 
-        # Récupérer les leads
-        history = tracker.get_history(
-            limit=limit,
+        # Récupérer les contacts
+        # Déterminer le filtre enriched
+        enriched_filter = None
+        if filter_enriched == "Enrichis":
+            enriched_filter = True
+        elif filter_enriched == "Non enrichis":
+            enriched_filter = False
+
+        contacts = contact_manager.search(
+            query=search_filter,
             source=source_filter,
-            search=search_filter
+            enriched=enriched_filter,
+            limit=limit
         )
 
-        # Filtre enrichissement (côté client)
-        if filter_enriched == "Enrichis":
-            history = [h for h in history if h.get('enriched_at')]
-        elif filter_enriched == "Non enrichis":
-            history = [h for h in history if not h.get('enriched_at')]
+        if contacts:
+            df = pd.DataFrame(contacts)
 
-        if history:
-            df = pd.DataFrame(history)
-
-            # Colonnes à afficher avec source
-            display_cols = ['source', 'siren', 'denomination', 'email', 'ville', 'code_ape', 'date_extraction']
+            # Colonnes à afficher avec source (nouveau schéma)
+            display_cols = ['source', 'siren', 'company_name', 'email', 'city', 'ape_code', 'created_at']
             display_cols = [col for col in display_cols if col in df.columns]
 
             # Formater la date
-            if 'date_extraction' in df.columns:
-                df['date_extraction'] = pd.to_datetime(df['date_extraction']).dt.strftime('%Y-%m-%d %H:%M')
+            if 'created_at' in df.columns:
+                df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M')
 
             # Ajouter emoji source
             if 'source' in df.columns:
@@ -128,7 +130,7 @@ with tab1:
                 df['source'] = df['source'].apply(lambda x: f"{source_emoji.get(x, '📄')} {x}" if x else "📄 sirene")
 
             # Sélection multiple
-            st.markdown(f"**{len(history)} leads trouvés**")
+            st.markdown(f"**{len(contacts)} contacts trouvés**")
 
             # Afficher le tableau avec sélection
             selected_indices = []
@@ -151,11 +153,11 @@ with tab1:
                     ),
                     "source": st.column_config.TextColumn("Source", width="small"),
                     "siren": st.column_config.TextColumn("SIREN", width="medium"),
-                    "denomination": st.column_config.TextColumn("Entreprise", width="large"),
+                    "company_name": st.column_config.TextColumn("Entreprise", width="large"),
                     "email": st.column_config.TextColumn("Email", width="medium"),
-                    "ville": st.column_config.TextColumn("Ville", width="medium"),
-                    "code_ape": st.column_config.TextColumn("APE", width="small"),
-                    "date_extraction": st.column_config.TextColumn("Date", width="medium"),
+                    "city": st.column_config.TextColumn("Ville", width="medium"),
+                    "ape_code": st.column_config.TextColumn("APE", width="small"),
+                    "created_at": st.column_config.TextColumn("Date", width="medium"),
                 },
                 disabled=display_cols  # Désactiver l'édition des colonnes data
             )
@@ -194,7 +196,7 @@ with tab1:
                     use_container_width=True
                 )
         else:
-            st.warning("Aucun lead trouvé avec ces filtres")
+            st.warning("Aucun contact trouvé avec ces filtres")
 
 
 # --- TAB 2: Import HubSpot ---
@@ -309,44 +311,46 @@ with tab3:
     # Campagnes récentes
     st.markdown("**📁 Campagnes récentes**")
 
-    if stats['campagnes_recentes']:
-        for campagne in stats['campagnes_recentes'][:5]:
+    campaigns = stats.get('campaigns_recent', [])
+    if campaigns:
+        for campaign in campaigns[:5]:
+            campaign_id = campaign.get('campaign_id', 'N/A')
             with st.expander(
-                f"📁 {campagne['campagne_id']} - {campagne['count']} leads",
+                f"📁 {campaign_id} - {campaign['count']} contacts",
                 expanded=False
             ):
                 try:
-                    date_camp = datetime.fromisoformat(campagne['date'])
+                    date_camp = datetime.fromisoformat(campaign['date'])
                     st.caption(f"Date: {date_camp.strftime('%Y-%m-%d %H:%M:%S')}")
                 except:
-                    st.caption(f"Date: {campagne['date']}")
+                    st.caption(f"Date: {campaign['date']}")
 
                 col1, col2 = st.columns([3, 1])
 
                 with col1:
-                    st.metric("Nombre de leads", campagne['count'])
+                    st.metric("Nombre de contacts", campaign['count'])
 
                 with col2:
-                    if st.button("🗑️ Supprimer", key=f"del_{campagne['campagne_id']}"):
-                        if st.session_state.get(f'confirm_{campagne["campagne_id"]}'):
-                            deleted = tracker.delete_campagne(campagne['campagne_id'])
-                            st.success(f"✅ {deleted} leads supprimés")
+                    if st.button("🗑️ Supprimer", key=f"del_{campaign_id}"):
+                        if st.session_state.get(f'confirm_{campaign_id}'):
+                            deleted = contact_manager.delete_campaign(campaign_id)
+                            st.success(f"✅ {deleted} contacts supprimés")
                             st.rerun()
                         else:
-                            st.session_state[f'confirm_{campagne["campagne_id"]}'] = True
+                            st.session_state[f'confirm_{campaign_id}'] = True
                             st.warning("⚠️ Cliquez à nouveau pour confirmer")
     else:
         st.info("ℹ️ Aucune campagne enregistrée")
 
     st.divider()
 
-    # Nettoyer les anciens leads
-    st.markdown("**🗑️ Nettoyage**")
+    # Archiver les anciens contacts
+    st.markdown("**🗑️ Archivage**")
 
     col1, col2 = st.columns(2)
     with col1:
         days = st.number_input(
-            "Supprimer les leads plus vieux que (jours)",
+            "Archiver les contacts plus vieux que (jours)",
             min_value=1,
             max_value=365,
             value=90
@@ -355,10 +359,10 @@ with tab3:
     with col2:
         st.write("")
         st.write("")
-        if st.button("🗑️ Nettoyer", use_container_width=True):
+        if st.button("🗑️ Archiver", use_container_width=True):
             if st.session_state.get('confirm_clean'):
-                deleted = tracker.clear_history(older_than_days=days)
-                st.success(f"✅ {deleted} leads supprimés")
+                archived = contact_manager.archive_old_contacts(older_than_days=days)
+                st.success(f"✅ {archived} contacts archivés")
                 del st.session_state.confirm_clean
                 st.rerun()
             else:
@@ -369,12 +373,12 @@ with tab3:
 
     # Réinitialisation complète
     st.markdown("**🔥 Réinitialisation complète**")
-    st.markdown("Supprime **TOUT** l'historique.")
+    st.markdown("Supprime **TOUS** les contacts.")
 
     if st.button("🔥 RÉINITIALISER", type="primary"):
         if st.session_state.get('confirm_reset'):
-            deleted = tracker.clear_history()
-            st.success(f"✅ {deleted} leads supprimés")
+            deleted = contact_manager.clear_all(confirm=True)
+            st.success(f"✅ {deleted} contacts supprimés")
             del st.session_state.confirm_reset
             st.rerun()
         else:
@@ -387,7 +391,7 @@ with tab3:
     st.markdown("**ℹ️ Informations système**")
     db_path = "data/leads.db"
     if os.path.exists(db_path):
-        st.code(f"Base: {db_path}\nTaille: {os.path.getsize(db_path) / 1024:.2f} KB\nLeads: {stats['total_leads']}")
+        st.code(f"Base: {db_path}\nTaille: {os.path.getsize(db_path) / 1024:.2f} KB\nContacts: {stats['total_contacts']}")
     else:
         st.info("Base de données non initialisée")
 

@@ -17,7 +17,7 @@ from modules.lead_scraper import (
     Enricher,
     Exporter,
     QueryParser,
-    LeadTracker,
+    ContactManager,
     HubSpotClient
 )
 
@@ -231,8 +231,8 @@ with tab_main:
                 status_text.text("🔍 Filtrage des doublons...")
                 update_log("🔍 Vérification des doublons SQLite...")
 
-                tracker = LeadTracker()
-                companies, num_duplicates = tracker.filter_duplicates(companies)
+                contact_manager = ContactManager()
+                companies, num_duplicates = contact_manager.filter_duplicates(companies)
 
                 if num_duplicates > 0:
                     update_log(f"⚠️ {num_duplicates} doublons filtrés")
@@ -345,9 +345,9 @@ with tab_main:
                 update_log("📝 Enregistrement historique...")
 
                 try:
-                    tracker = LeadTracker()
+                    contact_manager = ContactManager()
                     campagne_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    added = tracker.add_leads(enriched_companies, campagne_id=campagne_id)
+                    added, _ = contact_manager.import_from_sirene(enriched_companies, campaign_id=campagne_id)
                     update_log(f"✅ {added} leads ajoutés")
                 except Exception as e:
                     update_log(f"⚠️ Erreur enregistrement: {e}")
@@ -577,11 +577,11 @@ with st.sidebar:
 
     if enable_deduplication:
         try:
-            from modules.lead_scraper import LeadTracker
-            tracker = LeadTracker()
-            stats = tracker.get_stats()
-            if stats['total_leads'] > 0:
-                st.caption(f"📊 {stats['total_leads']} leads en base")
+            from modules.lead_scraper import ContactManager
+            manager = ContactManager()
+            stats = manager.get_stats()
+            if stats['total_contacts'] > 0:
+                st.caption(f"📊 {stats['total_contacts']} contacts en base")
         except Exception as e:
             pass
 
@@ -626,7 +626,7 @@ with st.sidebar:
     ):
         # Import and run extraction in main tab
         with tab_main:
-            from modules.lead_scraper import SireneClient, PappersClient, Enricher, Exporter, LeadTracker, HubSpotClient
+            from modules.lead_scraper import SireneClient, PappersClient, Enricher, Exporter, ContactManager, HubSpotClient
 
             def run_extraction_sidebar(
                 codes_ape_list, dept_list, eff_min, eff_max,
@@ -675,8 +675,8 @@ with st.sidebar:
                     if dedup:
                         progress_bar.progress(35)
                         status_text.text("🔍 Filtrage des doublons...")
-                        tracker = LeadTracker()
-                        companies, num_duplicates = tracker.filter_duplicates(companies)
+                        contact_manager = ContactManager()
+                        companies, num_duplicates = contact_manager.filter_duplicates(companies)
                         if num_duplicates > 0:
                             update_log(f"⚠️ {num_duplicates} doublons filtrés")
                         if not companies:
@@ -718,9 +718,9 @@ with st.sidebar:
                     st.session_state.export_files = export_results
 
                     if dedup:
-                        tracker = LeadTracker()
+                        contact_manager = ContactManager()
                         campagne_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        tracker.add_leads(companies, campagne_id=campagne_id)
+                        contact_manager.import_from_sirene(companies, campaign_id=campagne_id)
 
                     st.session_state.results = companies
                     st.session_state.extraction_status = 'done'
