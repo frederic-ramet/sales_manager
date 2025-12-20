@@ -11,7 +11,7 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 001 | **Dashboard Pipeline CFO** | Sync Asana → Google Sheets + scheduler | ✅ Done |
 | 002 | **Lead Scraper** | Extraction SIRENE/Pappers + enrichissement | ✅ Done |
 | 003 | **UI Navigation** | Interface multi-page Streamlit | ✅ Done |
-| 004 | **GetSales Sync** | Sync leads LinkedIn → HubSpot | 🆕 Draft |
+| 004 | **GetSales Sync** | Sync leads LinkedIn → HubSpot | ✅ Done |
 
 ---
 
@@ -64,12 +64,13 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 - [x] Page d'accueil avec statuts
 - [x] Navigation emoji-numérotée
 
-### Phase 4 : GetSales Sync (Module 004) 🆕
-- [ ] Client API GetSales
-- [ ] Déduplication LinkedIn/Email
-- [ ] Validation manuelle leads
-- [ ] Formulaire merge
-- [ ] Sync interactions → Notes HubSpot
+### Phase 4 : GetSales Sync (Module 004) ✅
+- [x] Client API GetSales (rate limiting, retry)
+- [x] Modèles SQLite (PendingLead, SyncLog, LeadInteraction)
+- [x] Déduplication LinkedIn/Email
+- [x] Validation manuelle leads (create/merge/reject)
+- [x] Formulaire merge champ par champ
+- [x] Sync interactions → base locale
 
 ---
 
@@ -80,7 +81,7 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 001 - Dashboard CFO | ~9h | ✅ |
 | 002 - Lead Scraper | ~22h | ✅ |
 | 003 - UI Navigation | ~11h | ✅ |
-| 004 - GetSales Sync | ~9 jours | - |
+| 004 - GetSales Sync | ~9 jours | ✅ |
 
 ---
 
