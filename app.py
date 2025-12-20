@@ -83,9 +83,15 @@ with col2:
             except SheetsSyncError as e:
                 error_msg = str(e)
                 st.error(f"**Erreur Google Sheets:** {error_msg}")
-                if "not found" in error_msg.lower() or "introuvable" in error_msg.lower():
-                    st.info("Vérifiez que le Service Account a accès au Sheet (partage avec l'email du SA)")
-                elif "permission" in error_msg.lower():
+
+                # Lire l'email du service account pour l'afficher
+                try:
+                    import json
+                    with open(google_creds_path) as f:
+                        sa_email = json.load(f).get('client_email', 'N/A')
+                    st.warning(f"📧 **Email à partager:** `{sa_email}`")
+                    st.info("Ouvrez votre Google Sheet → Partager → Collez cet email → Éditeur → Partager")
+                except:
                     st.info("Partagez le Google Sheet avec l'email du Service Account (en éditeur)")
 
 st.divider()
