@@ -6,7 +6,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-from modules.lead_scraper import ContactManager
+from modules.lead_scraper import ContactManager, HubSpotClient, PappersClient
 
 st.title("📜 Base de Leads")
 st.markdown("Hub central de tous vos leads (SIRENE, HubSpot, GetSales)")
@@ -168,19 +168,93 @@ with tab1:
             if selected_count > 0:
                 st.info(f"**{selected_count}** lead(s) sélectionné(s)")
 
+                # Récupérer les UUIDs des contacts sélectionnés
+                selected_mask = edited_df['Sélectionner']
+                selected_uuids = df.loc[selected_mask, 'uuid'].tolist() if 'uuid' in df.columns else []
+
                 col1, col2, col3 = st.columns(3)
 
                 with col1:
-                    if st.button("✨ Enrichir avec Pappers", use_container_width=True):
-                        st.warning("🚧 Fonctionnalité à venir - Enrichissement Pappers")
+                    pappers_key = os.getenv('PAPPERS_API_KEY')
+                    if st.button("✨ Enrichir avec Pappers", use_container_width=True, disabled=not pappers_key):
+                        if not pappers_key:
+                            st.error("❌ PAPPERS_API_KEY non configurée")
+                        elif selected_uuids:
+                            with st.spinner("Enrichissement en cours..."):
+                                enriched_count = 0
+                                try:
+                                    with PappersClient() as pappers:
+                                        for uuid in selected_uuids:
+                                            contact = contact_manager.get_contact(uuid)
+                                            if contact and contact.get('siren'):
+                                                # Enrichir via Pappers
+                                                enriched_data = pappers.get_company(contact['siren'])
+                                                if enriched_data:
+                                                    # Mettre à jour le contact
+                                                    update_data = {
+                                                        'email': enriched_data.get('email'),
+                                                        'phone': enriched_data.get('telephone'),
+                                                        'firstname': enriched_data.get('dirigeant_prenom'),
+                                                        'lastname': enriched_data.get('dirigeant_nom'),
+                                                        'job_title': enriched_data.get('dirigeant_fonction'),
+                                                        'employee_range': enriched_data.get('effectif'),
+                                                        'revenue_range': enriched_data.get('chiffre_affaires'),
+                                                    }
+                                                    # Filtrer les valeurs None
+                                                    update_data = {k: v for k, v in update_data.items() if v}
+                                                    if update_data:
+                                                        contact_manager.update_contact(uuid, update_data)
+                                                        contact_manager.mark_enriched(uuid, source='pappers')
+                                                        enriched_count += 1
+                                    st.success(f"✅ {enriched_count} contact(s) enrichi(s)")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Erreur: {e}")
 
                 with col2:
-                    if st.button("⬆️ Sync vers HubSpot", use_container_width=True):
-                        st.warning("🚧 Fonctionnalité à venir - Push HubSpot")
+                    hubspot_key = os.getenv('HUBSPOT_API_KEY')
+                    if st.button("⬆️ Sync vers HubSpot", use_container_width=True, disabled=not hubspot_key):
+                        if not hubspot_key:
+                            st.error("❌ HUBSPOT_API_KEY non configurée")
+                        elif selected_uuids:
+                            with st.spinner("Synchronisation vers HubSpot..."):
+                                try:
+                                    # Préparer les contacts pour HubSpot
+                                    contacts_to_push = contact_manager.export_for_hubspot(selected_uuids)
+
+                                    with HubSpotClient() as hubspot:
+                                        # Extraire les properties pour push
+                                        push_data = [c['properties'] for c in contacts_to_push]
+                                        result = hubspot.push_contacts(push_data)
+
+                                        # Marquer comme synchronisés
+                                        for contact in contacts_to_push:
+                                            contact_manager.update_contact(contact['_uuid'], {
+                                                'synced_to_hubspot': True,
+                                                'last_sync_hubspot': datetime.now()
+                                            })
+
+                                    st.success(f"✅ {result['created']} contact(s) envoyé(s) vers HubSpot")
+                                    if result.get('errors'):
+                                        st.warning(f"⚠️ {len(result['errors'])} erreur(s)")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Erreur: {e}")
 
                 with col3:
                     if st.button("🗑️ Supprimer", use_container_width=True):
-                        st.warning("🚧 Suppression batch à implémenter")
+                        if selected_uuids:
+                            if st.session_state.get('confirm_delete_batch'):
+                                deleted = 0
+                                for uuid in selected_uuids:
+                                    if contact_manager.delete_contact(uuid, hard_delete=True):
+                                        deleted += 1
+                                st.success(f"✅ {deleted} contact(s) supprimé(s)")
+                                del st.session_state.confirm_delete_batch
+                                st.rerun()
+                            else:
+                                st.session_state.confirm_delete_batch = True
+                                st.warning("⚠️ Cliquez à nouveau pour confirmer la suppression")
 
             st.divider()
 
@@ -258,14 +332,80 @@ with tab2:
 
         # Bouton import
         if st.button("🔄 Lancer l'import", type="primary", use_container_width=True):
-            st.warning("🚧 Fonctionnalité en cours de développement")
-            st.info(f"""
-            Import prévu :
-            - Type : {import_type}
-            - Limite : {import_limit}
-            - Liste : {filter_list or 'Toutes'}
-            - Période : {f'{filter_days} derniers jours' if filter_days > 0 else 'Toutes dates'}
-            """)
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            try:
+                status_text.text("🔄 Connexion à HubSpot...")
+                progress_bar.progress(10)
+
+                with HubSpotClient() as hubspot:
+                    # Tester la connexion
+                    success, msg = hubspot.test_connection()
+                    if not success:
+                        st.error(f"❌ {msg}")
+                    else:
+                        status_text.text("📥 Récupération des contacts HubSpot...")
+                        progress_bar.progress(20)
+
+                        # Synchroniser depuis HubSpot
+                        def progress_callback(current, phase):
+                            progress_bar.progress(min(20 + int(current / 10), 80))
+                            status_text.text(f"📥 {current} contacts récupérés...")
+
+                        sync_result = hubspot.sync_contacts(progress_callback=progress_callback)
+
+                        if sync_result['success']:
+                            status_text.text("💾 Import dans la base locale...")
+                            progress_bar.progress(85)
+
+                            # Récupérer les contacts du miroir
+                            mirror = hubspot.get_mirror()
+                            hubspot_contacts = mirror.get('contacts', [])
+
+                            # Limiter si demandé
+                            if import_limit and import_limit < len(hubspot_contacts):
+                                hubspot_contacts = hubspot_contacts[:import_limit]
+
+                            # Convertir au format unified_contacts
+                            contacts_to_import = []
+                            for hc in hubspot_contacts:
+                                contacts_to_import.append({
+                                    'hubspot_contact_id': hc.get('hubspot_id'),
+                                    'company_name': hc.get('denomination'),
+                                    'email': hc.get('email'),
+                                    'phone': hc.get('telephone'),
+                                    'firstname': hc.get('dirigeant', '').split(' ')[0] if hc.get('dirigeant') else None,
+                                    'lastname': ' '.join(hc.get('dirigeant', '').split(' ')[1:]) if hc.get('dirigeant') else None,
+                                    'job_title': hc.get('fonction'),
+                                    'siren': hc.get('siren'),
+                                    'ape_code': hc.get('code_ape'),
+                                    'city': hc.get('ville'),
+                                    'address': hc.get('adresse'),
+                                    'postal_code': hc.get('code_postal'),
+                                    'synced_to_hubspot': True,
+                                    'last_sync_hubspot': datetime.now(),
+                                })
+
+                            # Importer dans unified_contacts
+                            added, updated = contact_manager.import_from_hubspot(contacts_to_import)
+
+                            progress_bar.progress(100)
+                            status_text.text("✅ Import terminé!")
+
+                            st.success(f"""
+                            ✅ Import HubSpot terminé !
+                            - **{sync_result['total_contacts']}** contacts dans HubSpot
+                            - **{added}** nouveaux contacts importés
+                            - **{updated}** contacts mis à jour
+                            """)
+                            st.rerun()
+                        else:
+                            st.error("❌ Erreur lors de la synchronisation HubSpot")
+
+            except Exception as e:
+                st.error(f"❌ Erreur: {e}")
+                progress_bar.progress(0)
 
         st.divider()
 
