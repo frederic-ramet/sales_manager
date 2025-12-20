@@ -194,3 +194,217 @@ class GoogleSheetsSync:
         for worksheet in self.spreadsheet.worksheets():
             worksheet.clear()
         logger.info("Tous les onglets vidés")
+
+    def read_sheet(self, sheet_name: str) -> Optional[pd.DataFrame]:
+        """
+        Lit les données d'un onglet existant.
+
+        Args:
+            sheet_name: Nom de l'onglet
+
+        Returns:
+            DataFrame avec les données ou None si l'onglet n'existe pas
+        """
+        try:
+            worksheet = self.spreadsheet.worksheet(sheet_name)
+            data = worksheet.get_all_values()
+            if not data or len(data) < 2:
+                return None
+            # Première ligne = header
+            df = pd.DataFrame(data[1:], columns=data[0])
+            return df
+        except gspread.WorksheetNotFound:
+            return None
+        except Exception as e:
+            logger.warning(f"Erreur lecture onglet '{sheet_name}': {e}")
+            return None
+
+    def detect_changes(self, new_df: pd.DataFrame, existing_df: pd.DataFrame) -> List[Dict]:
+        """
+        Détecte les changements entre nouvelles données et données existantes.
+
+        Args:
+            new_df: Nouvelles données
+            existing_df: Données existantes du sheet
+
+        Returns:
+            Liste des changements détectés
+        """
+        changes = []
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Créer un dict des données existantes par Id
+        existing_by_id = {}
+        if existing_df is not None and not existing_df.empty and 'Id' in existing_df.columns:
+            for _, row in existing_df.iterrows():
+                existing_by_id[str(row['Id'])] = row.to_dict()
+
+        # Comparer chaque nouvelle ligne
+        for _, new_row in new_df.iterrows():
+            task_id = str(new_row['Id'])
+            task_name = new_row.get('Name', '')
+
+            if task_id in existing_by_id:
+                old_row = existing_by_id[task_id]
+                # Comparer les champs (sauf Modified qui change toujours)
+                fields_to_compare = ['Name', 'Budget', 'Status', 'Source', 'DocSuivi', 'Proba']
+                changed_fields = []
+
+                for field in fields_to_compare:
+                    old_val = str(old_row.get(field, '') or '')
+                    new_val = str(new_row.get(field, '') or '')
+                    if old_val != new_val:
+                        changed_fields.append({
+                            'field': field,
+                            'old': old_val,
+                            'new': new_val
+                        })
+
+                if changed_fields:
+                    changes.append({
+                        'timestamp': timestamp,
+                        'id': task_id,
+                        'name': task_name,
+                        'action': 'modified',
+                        'changes': changed_fields
+                    })
+            else:
+                # Nouvelle entrée
+                changes.append({
+                    'timestamp': timestamp,
+                    'id': task_id,
+                    'name': task_name,
+                    'action': 'added',
+                    'changes': []
+                })
+
+        # Vérifier les suppressions
+        new_ids = set(str(row['Id']) for _, row in new_df.iterrows())
+        for old_id, old_row in existing_by_id.items():
+            if old_id not in new_ids:
+                changes.append({
+                    'timestamp': timestamp,
+                    'id': old_id,
+                    'name': old_row.get('Name', ''),
+                    'action': 'removed',
+                    'changes': []
+                })
+
+        return changes
+
+    def log_changes(self, changes: List[Dict]):
+        """
+        Écrit les changements dans l'onglet Log.
+
+        Args:
+            changes: Liste des changements à logger
+        """
+        if not changes:
+            return
+
+        log_sheet_name = 'Log'
+
+        # Récupérer ou créer l'onglet Log
+        try:
+            worksheet = self.spreadsheet.worksheet(log_sheet_name)
+        except gspread.WorksheetNotFound:
+            worksheet = self.spreadsheet.add_worksheet(
+                title=log_sheet_name,
+                rows=1000,
+                cols=10
+            )
+            # Ajouter header
+            header = ['Timestamp', 'Action', 'Id', 'Name', 'Field', 'Old Value', 'New Value']
+            worksheet.update('A1', [header], value_input_option='USER_ENTERED')
+            worksheet.format('1:1', {'textFormat': {'bold': True}})
+            logger.info(f"Onglet '{log_sheet_name}' créé")
+
+        # Préparer les lignes de log
+        log_rows = []
+        for change in changes:
+            if change['action'] == 'modified':
+                for field_change in change['changes']:
+                    log_rows.append([
+                        change['timestamp'],
+                        'Modifié',
+                        change['id'],
+                        change['name'],
+                        field_change['field'],
+                        field_change['old'],
+                        field_change['new']
+                    ])
+            elif change['action'] == 'added':
+                log_rows.append([
+                    change['timestamp'],
+                    'Ajouté',
+                    change['id'],
+                    change['name'],
+                    '',
+                    '',
+                    ''
+                ])
+            elif change['action'] == 'removed':
+                log_rows.append([
+                    change['timestamp'],
+                    'Supprimé',
+                    change['id'],
+                    change['name'],
+                    '',
+                    '',
+                    ''
+                ])
+
+        if log_rows:
+            # Trouver la première ligne vide
+            existing_data = worksheet.get_all_values()
+            next_row = len(existing_data) + 1
+
+            # Ajouter les nouvelles lignes
+            cell_range = f'A{next_row}'
+            worksheet.update(cell_range, log_rows, value_input_option='USER_ENTERED')
+            logger.info(f"{len(log_rows)} entrées ajoutées au log")
+
+    def sync_with_logging(self, df: pd.DataFrame, sheet_name: str = 'Pipeline') -> SyncResult:
+        """
+        Synchronise avec détection des changements et logging.
+
+        Args:
+            df: DataFrame à synchroniser
+            sheet_name: Nom de l'onglet principal
+
+        Returns:
+            SyncResult avec statut et nombre de changements
+        """
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        try:
+            # Lire données existantes
+            existing_df = self.read_sheet(sheet_name)
+
+            # Détecter les changements
+            changes = self.detect_changes(df, existing_df)
+
+            # Logger les changements
+            if changes:
+                self.log_changes(changes)
+                logger.info(f"{len(changes)} changements détectés et loggés")
+
+            # Mettre à jour l'onglet principal
+            self._write_to_sheet(df, sheet_name)
+
+            return SyncResult(
+                success=True,
+                timestamp=timestamp,
+                sheets_updated=[sheet_name, 'Log'] if changes else [sheet_name],
+                total_rows=len(df)
+            )
+
+        except Exception as e:
+            logger.error(f"Erreur sync: {e}")
+            return SyncResult(
+                success=False,
+                timestamp=timestamp,
+                sheets_updated=[],
+                total_rows=0,
+                error=str(e)
+            )

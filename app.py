@@ -63,30 +63,14 @@ def parse_tasks_to_dataframe(tasks):
     """Convertit les tasks Asana en DataFrame avec le mapping défini."""
     rows = []
     for task in tasks:
-        # Section (from memberships)
-        section = None
-        memberships = task.get('memberships', [])
-        if memberships:
-            section_data = memberships[0].get('section', {})
-            section = section_data.get('name') if section_data else None
-
-        # Assignee
-        assignee = task.get('assignee', {})
-        owner = assignee.get('name') if assignee else None
-
         row = {
             'Id': task.get('gid'),
             'Name': task.get('name'),
-            'Owner': owner,
-            'Section': section,
             'Budget': get_custom_field(task, 'Estimated value'),
             'Status': get_custom_field(task, 'Lead status'),
-            'Priority': get_custom_field(task, 'Priority'),
-            'Next Steps': get_custom_field(task, 'Next Steps (Sales)'),
             'Source': get_custom_field(task, 'Source'),
             'DocSuivi': get_custom_field(task, 'Link Sheets'),
             'Proba': get_custom_field(task, 'Confidence Score'),
-            'Due': task.get('due_on'),
             'Modified': task.get('modified_at'),
         }
         rows.append(row)
@@ -208,11 +192,14 @@ else:
                 df = parse_tasks_to_dataframe(st.session_state.raw_tasks)
 
                 syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
-                result = syncer.sync_pipeline({'Pipeline': df})
+                result = syncer.sync_with_logging(df, 'Pipeline')
 
                 if result.success:
                     st.session_state.last_sync = result.timestamp
-                    st.success(f"**{len(df)} lignes** synchronisées vers Google Sheets")
+                    if 'Log' in result.sheets_updated:
+                        st.success(f"**{len(df)} lignes** synchronisées (changements loggés)")
+                    else:
+                        st.success(f"**{len(df)} lignes** synchronisées (aucun changement)")
                 else:
                     st.error(f"Erreur: {result.error}")
 
