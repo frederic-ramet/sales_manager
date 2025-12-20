@@ -246,7 +246,16 @@ class GoogleSheetsSync:
 
             if task_id in existing_by_id:
                 old_row = existing_by_id[task_id]
-                # Comparer les champs (sauf Modified qui change toujours)
+
+                # Vérifier d'abord si Modified a changé
+                old_modified = str(old_row.get('Modified', '') or '')
+                new_modified = str(new_row.get('Modified', '') or '')
+
+                if old_modified == new_modified:
+                    # Pas de changement réel, on skip
+                    continue
+
+                # Comparer les champs (sauf Modified)
                 fields_to_compare = ['Name', 'Budget', 'Status', 'Source', 'DocSuivi', 'Proba']
                 changed_fields = []
 
