@@ -8,9 +8,10 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 
 | # | Module | Description | Statut |
 |---|--------|-------------|--------|
-| 001 | **Dashboard Pipeline CFO** | Sync Asana → Google Sheets pour suivi financier | En cours |
-| 002 | **Lead Scraper** | Récupération et enrichissement de leads | À faire |
-| 003 | **UI Navigation** | Interface unifiée entre modules | À faire |
+| 001 | **Dashboard Pipeline CFO** | Sync Asana → Google Sheets + scheduler | ✅ Done |
+| 002 | **Lead Scraper** | Extraction SIRENE/Pappers + enrichissement | ✅ Done |
+| 003 | **UI Navigation** | Interface multi-page Streamlit | ✅ Done |
+| 004 | **GetSales Sync** | Sync leads LinkedIn → HubSpot | 🆕 Draft |
 
 ---
 
@@ -29,10 +30,13 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 │   ├── 002-lead-scraper/
 │   │   ├── spec.md
 │   │   └── tasks.md
-│   └── 003-ui-navigation/
+│   ├── 003-ui-navigation/
+│   │   ├── spec.md
+│   │   └── tasks.md
+│   └── 004-getsales-sync/
 │       ├── spec.md
 │       └── tasks.md
-└── _to_migrate/                  # Code legacy à migrer
+└── _to_migrate_leadscraper/      # Code legacy (migré)
 ```
 
 ---
@@ -40,34 +44,43 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 ## Roadmap
 
 ### Phase 1 : Dashboard CFO (Module 001) ✅
-- [x] Client Asana
+- [x] Client Asana SDK v5
 - [x] Sync Google Sheets
 - [x] Interface Streamlit
-- [x] Détection changements + Log
-- [ ] **Sync automatique (quotidien/hebdo)**
+- [x] Détection changements (Modified timestamp)
+- [x] Sync automatique (APScheduler)
 
-### Phase 2 : Lead Scraper (Module 002)
-- [ ] Migration code existant
-- [ ] Scraping leads
-- [ ] Enrichissement SIRENE/Pappers
-- [ ] Push vers Asana
+### Phase 2 : Lead Scraper (Module 002) ✅
+- [x] Migration modules core (9 modules)
+- [x] Client SIRENE (gratuit)
+- [x] Client Pappers (enrichissement)
+- [x] Client HubSpot (sync CRM)
+- [x] Déduplication SQLite
+- [x] Query Parser (Claude API)
+- [x] Pages Streamlit (Recherche + Historique)
 
-### Phase 3 : UI Navigation (Module 003)
-- [ ] Restructuration multi-page
-- [ ] Page d'accueil
-- [ ] Composants communs
-- [ ] Intégration modules
+### Phase 3 : UI Navigation (Module 003) ✅
+- [x] Restructuration multi-page
+- [x] Page d'accueil avec statuts
+- [x] Navigation emoji-numérotée
+
+### Phase 4 : GetSales Sync (Module 004) 🆕
+- [ ] Client API GetSales
+- [ ] Déduplication LinkedIn/Email
+- [ ] Validation manuelle leads
+- [ ] Formulaire merge
+- [ ] Sync interactions → Notes HubSpot
 
 ---
 
 ## Temps estimés
 
-| Module | Temps |
-|--------|-------|
-| 001 - Dashboard CFO (Phase 2) | ~9h |
-| 002 - Lead Scraper | ~22h |
-| 003 - UI Navigation | ~11h |
-| **TOTAL** | **~42h** |
+| Module | Estimé | Réel |
+|--------|--------|------|
+| 001 - Dashboard CFO | ~9h | ✅ |
+| 002 - Lead Scraper | ~22h | ✅ |
+| 003 - UI Navigation | ~11h | ✅ |
+| 004 - GetSales Sync | ~9 jours | - |
 
 ---
 
@@ -83,6 +96,26 @@ cp .env.example .env
 
 # Lancement
 streamlit run app.py
+```
+
+---
+
+## Variables d'environnement
+
+```bash
+# Dashboard CFO (001)
+ASANA_ACCESS_TOKEN=xxx
+ASANA_PROJECT_GID=xxx
+GOOGLE_CREDENTIALS_PATH=credentials/service-account.json
+GOOGLE_SPREADSHEET_URL=xxx
+
+# Lead Scraper (002)
+PAPPERS_API_KEY=xxx
+HUBSPOT_API_KEY=xxx
+ANTHROPIC_API_KEY=xxx
+
+# GetSales Sync (004)
+GETSALES_API_KEY=xxx
 ```
 
 ---
