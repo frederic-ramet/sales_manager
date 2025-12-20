@@ -97,62 +97,40 @@ class AsanaClient:
             raise AsanaClientError("Project GID requis")
 
         tasks = []
-        retries = 0
-        offset = None
 
-        while retries < self.MAX_RETRIES:
-            try:
-                # Récupération avec pagination
-                opts = {
-                    'opt_fields': ','.join(self.OPT_FIELDS),
-                    'limit': 100,
-                }
-                if offset:
-                    opts['offset'] = offset
+        try:
+            # Récupération des tasks
+            opts = {
+                'opt_fields': ','.join(self.OPT_FIELDS),
+            }
 
-                result = self.tasks_api.get_tasks_for_project(project_gid, opts)
+            result = self.tasks_api.get_tasks_for_project(project_gid, opts)
 
-                for task in result.data:
-                    task_dict = task.to_dict() if hasattr(task, 'to_dict') else task
-                    # Filtrer les tasks complétées si demandé
-                    if not include_completed and task_dict.get('completed', False):
-                        continue
-                    tasks.append(task_dict)
+            # Le SDK peut retourner un générateur ou un objet avec .data
+            if hasattr(result, 'data'):
+                task_list = result.data
+            else:
+                task_list = result
 
-                # Vérifier s'il y a plus de résultats
-                if hasattr(result, 'next_page') and result.next_page:
-                    offset = result.next_page.get('offset')
-                else:
-                    break
-
-            except ApiException as e:
-                if e.status == 429:
-                    # Rate limit - attendre et réessayer
-                    wait_time = self.RETRY_DELAY * (retries + 1)
-                    logger.warning(f"Rate limit atteint, attente {wait_time}s...")
-                    time.sleep(wait_time)
-                    retries += 1
+            for task in task_list:
+                task_dict = task.to_dict() if hasattr(task, 'to_dict') else dict(task)
+                # Filtrer les tasks complétées si demandé
+                if not include_completed and task_dict.get('completed', False):
                     continue
-                elif e.status == 404:
-                    raise AsanaClientError(f"Projet {project_gid} introuvable")
-                elif e.status == 403:
-                    raise AsanaClientError(f"Accès refusé au projet {project_gid}")
-                else:
-                    retries += 1
-                    if retries >= self.MAX_RETRIES:
-                        raise AsanaClientError(f"Erreur API Asana: {e.reason}")
-                    time.sleep(self.RETRY_DELAY * retries)
-                    continue
+                tasks.append(task_dict)
 
-            except Exception as e:
-                retries += 1
-                if retries >= self.MAX_RETRIES:
-                    raise AsanaClientError(f"Erreur API Asana après {retries} tentatives: {e}")
-                time.sleep(self.RETRY_DELAY * retries)
-                continue
+        except ApiException as e:
+            if e.status == 429:
+                raise AsanaClientError("Rate limit Asana atteint. Réessayez dans quelques secondes.")
+            elif e.status == 404:
+                raise AsanaClientError(f"Projet {project_gid} introuvable")
+            elif e.status == 403:
+                raise AsanaClientError(f"Accès refusé au projet {project_gid}")
+            else:
+                raise AsanaClientError(f"Erreur API Asana: {e.reason}")
 
-            # Sort de la boucle si pas de pagination
-            break
+        except Exception as e:
+            raise AsanaClientError(f"Erreur récupération tasks: {e}")
 
         logger.info(f"Récupéré {len(tasks)} tasks depuis Asana")
         return tasks
