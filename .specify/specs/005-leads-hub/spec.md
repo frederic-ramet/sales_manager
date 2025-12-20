@@ -248,11 +248,11 @@ with tab3:
 
 ---
 
-## Questions ouvertes
+## Décisions
 
-1. **Import HubSpot** : importer tous les contacts ou seulement ceux sans SIREN ?
-2. **Doublons cross-source** : un lead HubSpot peut-il être lié à un lead SIRENE existant ?
-3. **Champs à synchroniser** : quels champs enrichis renvoyer vers HubSpot ?
+1. **Import HubSpot** : importer TOUS les contacts → amélioration ciblage prévue ensuite
+2. **Doublons cross-source** : NON, pas de lien. HubSpot = source de vérité. Lors d'ajout SIRENE, on vérifie que le lead n'existe pas déjà
+3. **Champs à synchroniser** : TOUS les champs enrichis sont renvoyés vers HubSpot
 
 ---
 

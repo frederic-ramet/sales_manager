@@ -543,7 +543,7 @@ with st.sidebar:
         "Nombre maximum de leads",
         min_value=1,
         max_value=MAX_RESULTS,
-        value=10,
+        value=1,
         step=1,
         help=f"Minimum 1, maximum {MAX_RESULTS}"
     )
