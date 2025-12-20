@@ -1,215 +1,93 @@
 """
-Interface Streamlit - Dashboard Pipeline CFO.
+Sales Ops Portal - Genie Factory
+Page d'accueil avec statut des modules.
 """
 
 import streamlit as st
-import pandas as pd
 import os
 from dotenv import load_dotenv
-import logging
-
-from core.asana_client import AsanaClient, AsanaClientError
-from core.sheets_sync import GoogleSheetsSync, SheetsSyncError
-
-# Configuration logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Charger les variables d'environnement
 load_dotenv()
 
-# Configuration de la page
+# Configuration de la page (uniquement dans app.py principal)
 st.set_page_config(
-    page_title="Dashboard Pipeline CFO",
-    page_icon="📊",
+    page_title="Sales Ops - Genie Factory",
+    page_icon="🏭",
     layout="wide"
 )
 
-st.title("📊 Dashboard Pipeline CFO")
-st.markdown("Synchronisation Asana → Google Sheets pour le pilotage financier")
+st.title("🏭 Sales Ops Portal")
+st.markdown("**Genie Factory** - Outils de gestion commerciale")
 
-# Initialiser le state
-if 'last_sync' not in st.session_state:
-    st.session_state.last_sync = None
-if 'raw_tasks' not in st.session_state:
-    st.session_state.raw_tasks = None
+st.divider()
 
-# Charger config depuis .env
-asana_token = os.getenv('ASANA_ACCESS_TOKEN', '')
-asana_project_gid = os.getenv('ASANA_PROJECT_GID', '')
-gsheet_url = os.getenv('GOOGLE_SPREADSHEET_URL', '')
-google_creds_path = os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials/service-account.json')
-
-
-def get_custom_field(task, field_name):
-    """Extrait la valeur d'un custom field par son nom."""
-    for cf in task.get('custom_fields', []):
-        if cf.get('name') == field_name:
-            # Selon le type, récupérer la bonne valeur
-            cf_type = cf.get('type')
-            if cf_type == 'number':
-                return cf.get('number_value')
-            elif cf_type == 'enum':
-                enum_val = cf.get('enum_value')
-                return enum_val.get('name') if enum_val else None
-            elif cf_type == 'text':
-                return cf.get('text_value')
-            else:
-                return cf.get('display_value')
-    return None
-
-
-def parse_tasks_to_dataframe(tasks):
-    """Convertit les tasks Asana en DataFrame avec le mapping défini."""
-    rows = []
-    for task in tasks:
-        row = {
-            'Id': task.get('gid'),
-            'Name': task.get('name'),
-            'Budget': get_custom_field(task, 'Estimated value'),
-            'Status': get_custom_field(task, 'Lead status'),
-            'Source': get_custom_field(task, 'Source'),
-            'DocSuivi': get_custom_field(task, 'Link Sheets'),
-            'Proba': get_custom_field(task, 'Confidence Score'),
-            'Modified': task.get('modified_at'),
-        }
-        rows.append(row)
-
-    return pd.DataFrame(rows)
-
-
-# === Tests de connexion ===
-st.header("1. Vérification des connexions")
-
+# === Statut des modules ===
 col1, col2 = st.columns(2)
 
+# --- Module 1: Dashboard CFO ---
 with col1:
-    st.subheader("Asana")
-    if st.button("🔗 Tester Asana", use_container_width=True):
-        if not asana_token:
-            st.error("**ASANA_ACCESS_TOKEN** non défini dans `.env`")
-        elif not asana_project_gid:
-            st.error("**ASANA_PROJECT_GID** non défini dans `.env`")
-        else:
-            try:
-                client = AsanaClient(asana_token)
-                user = client.test_connection()
-                st.success(f"Connecté en tant que **{user['name']}** ({user['email']})")
-            except AsanaClientError as e:
-                st.error(f"**Erreur Asana:** {e}")
-                st.info("Vérifiez que votre PAT est valide sur https://app.asana.com/0/my-apps")
+    st.subheader("📊 Dashboard Pipeline CFO")
+    st.markdown("Synchronisation Asana → Google Sheets")
 
-with col2:
-    st.subheader("Google Sheets")
-    if st.button("📊 Tester Google Sheets", use_container_width=True):
-        if not gsheet_url:
-            st.error("**GOOGLE_SPREADSHEET_URL** non défini dans `.env`")
-        elif not google_creds_path:
-            st.error("**GOOGLE_CREDENTIALS_PATH** non défini dans `.env`")
-        elif not os.path.exists(google_creds_path):
-            st.error(f"**Fichier credentials introuvable:** `{google_creds_path}`")
-            st.info("Placez votre fichier `service-account.json` dans le dossier `credentials/`")
-        else:
-            try:
-                syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
-                info = syncer.test_connection()
-                st.success(f"Connecté au sheet **{info['title']}**")
-                st.caption(f"Onglets existants: {', '.join(info['sheets'])}")
-            except SheetsSyncError as e:
-                error_msg = str(e)
-                st.error(f"**Erreur Google Sheets:** {error_msg}")
+    # Vérifier la config
+    asana_ok = bool(os.getenv('ASANA_ACCESS_TOKEN')) and bool(os.getenv('ASANA_PROJECT_GID'))
+    sheets_ok = bool(os.getenv('GOOGLE_SPREADSHEET_URL')) and os.path.exists(
+        os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials/service-account.json')
+    )
 
-                try:
-                    import json
-                    with open(google_creds_path) as f:
-                        sa_email = json.load(f).get('client_email', 'N/A')
-                    st.warning(f"📧 **Email à partager:** `{sa_email}`")
-                    st.info("Ouvrez votre Google Sheet → Partager → Collez cet email → Éditeur → Partager")
-                except:
-                    st.info("Partagez le Google Sheet avec l'email du Service Account (en éditeur)")
+    if asana_ok and sheets_ok:
+        st.success("✅ Configuré")
+    elif asana_ok:
+        st.warning("⚠️ Google Sheets non configuré")
+    elif sheets_ok:
+        st.warning("⚠️ Asana non configuré")
+    else:
+        st.error("❌ Non configuré")
 
-st.divider()
-
-# === Aperçu des données ===
-st.header("2. Aperçu des données Asana")
-
-asana_config_ok = all([asana_token, asana_project_gid])
-
-if not asana_config_ok:
-    st.warning("⚠️ Configuration Asana incomplète.")
-else:
-    if st.button("📥 Récupérer les données Asana", use_container_width=False):
-        with st.spinner("Récupération en cours..."):
-            try:
-                asana_client = AsanaClient(asana_token)
-                tasks = asana_client.get_project_tasks(asana_project_gid)
-
-                if not tasks:
-                    st.warning("Aucun deal trouvé dans le projet Asana.")
-                else:
-                    st.session_state.raw_tasks = tasks
-                    st.success(f"**{len(tasks)} tasks** récupérées depuis Asana")
-
-            except AsanaClientError as e:
-                st.error(f"**Erreur Asana:** {e}")
-
-    # Afficher les données si disponibles
-    if st.session_state.raw_tasks:
-        tasks = st.session_state.raw_tasks
-
-        # Créer le DataFrame
-        df = parse_tasks_to_dataframe(tasks)
-
-        st.subheader(f"📋 {len(df)} tasks")
-
-        # Afficher le tableau
-        st.dataframe(df, use_container_width=True)
-
-        # Données brutes (debug)
-        with st.expander("🔍 Voir les données JSON brutes"):
-            for i, task in enumerate(tasks):
-                with st.expander(f"Task {i+1}: {task.get('name', 'Sans nom')}"):
-                    st.json(task)
-
-st.divider()
-
-# === Synchronisation ===
-st.header("3. Synchronisation vers Google Sheets")
-
-config_ok = all([asana_token, asana_project_gid, gsheet_url, google_creds_path])
-creds_exist = os.path.exists(google_creds_path) if google_creds_path else False
-
-if not config_ok:
-    st.warning("⚠️ Configuration incomplète.")
-elif not creds_exist:
-    st.warning(f"⚠️ Fichier credentials introuvable: `{google_creds_path}`")
-elif not st.session_state.raw_tasks:
-    st.info("👆 Récupérez d'abord les données Asana (section 2)")
-else:
-    if st.button("🔄 Synchroniser vers Google Sheets", type="primary"):
-        with st.spinner("Synchronisation en cours..."):
-            try:
-                df = parse_tasks_to_dataframe(st.session_state.raw_tasks)
-
-                syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
-                result = syncer.sync_with_logging(df, 'Pipeline')
-
-                if result.success:
-                    st.session_state.last_sync = result.timestamp
-                    if 'Log' in result.sheets_updated:
-                        st.success(f"**{len(df)} lignes** synchronisées (changements loggés)")
-                    else:
-                        st.success(f"**{len(df)} lignes** synchronisées (aucun changement)")
-                else:
-                    st.error(f"Erreur: {result.error}")
-
-            except SheetsSyncError as e:
-                st.error(f"**Erreur Google Sheets:** {e}")
-
-    if st.session_state.last_sync:
+    # Dernière sync
+    if 'last_sync' in st.session_state and st.session_state.last_sync:
         st.caption(f"Dernière sync: {st.session_state.last_sync}")
 
+    st.page_link("pages/1_📊_Pipeline_CFO.py", label="Ouvrir le Dashboard CFO", icon="📊")
 
-# === Footer ===
+# --- Module 2: Lead Scraper ---
+with col2:
+    st.subheader("🎯 Lead Scraper")
+    st.markdown("Recherche et enrichissement de leads B2B")
+
+    # Vérifier la config
+    pappers_ok = bool(os.getenv('PAPPERS_API_KEY'))
+    hubspot_ok = bool(os.getenv('HUBSPOT_API_KEY'))
+
+    st.info("🚧 Module en cours de migration")
+
+    if pappers_ok:
+        st.caption("✅ Pappers configuré")
+    if hubspot_ok:
+        st.caption("✅ HubSpot configuré")
+
 st.divider()
-st.caption("Dashboard Pipeline CFO - Genie Factory")
+
+# === Liens rapides ===
+st.subheader("🔗 Liens rapides")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown("**Documentation**")
+    st.markdown("- [Asana API](https://developers.asana.com)")
+    st.markdown("- [Google Sheets API](https://developers.google.com/sheets)")
+
+with col2:
+    st.markdown("**Configuration**")
+    st.markdown("- Éditer `.env` pour les credentials")
+    st.markdown("- Dossier `credentials/` pour les fichiers JSON")
+
+with col3:
+    st.markdown("**Support**")
+    st.markdown("- Voir `.specify/` pour les specs")
+    st.markdown("- README.md pour le guide")
+
+st.divider()
+st.caption("Sales Ops Portal - Genie Factory")
