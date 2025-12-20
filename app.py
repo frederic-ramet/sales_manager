@@ -34,78 +34,71 @@ if 'last_sync' not in st.session_state:
 if 'last_result' not in st.session_state:
     st.session_state.last_result = None
 
+# Charger config depuis .env
+asana_token = os.getenv('ASANA_ACCESS_TOKEN', '')
+asana_project_gid = os.getenv('ASANA_PROJECT_GID', '')
+gsheet_url = os.getenv('GOOGLE_SPREADSHEET_URL', '')
+google_creds_path = os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials/service-account.json')
 
-# === SIDEBAR - Configuration ===
-with st.sidebar:
-    st.header("⚙️ Configuration")
 
+# === Tests de connexion ===
+st.header("1. Vérification des connexions")
+
+col1, col2 = st.columns(2)
+
+with col1:
     st.subheader("Asana")
-    asana_token = st.text_input(
-        "Personal Access Token",
-        value=os.getenv('ASANA_ACCESS_TOKEN', ''),
-        type="password",
-        help="Créez un PAT sur https://app.asana.com/0/my-apps"
-    )
-    asana_project_gid = st.text_input(
-        "Project GID",
-        value=os.getenv('ASANA_PROJECT_GID', ''),
-        help="GID du projet Sales Pipeline (visible dans l'URL)"
-    )
+    if st.button("🔗 Tester Asana", use_container_width=True):
+        if not asana_token:
+            st.error("**ASANA_ACCESS_TOKEN** non défini dans `.env`")
+        elif not asana_project_gid:
+            st.error("**ASANA_PROJECT_GID** non défini dans `.env`")
+        else:
+            try:
+                client = AsanaClient(asana_token)
+                user = client.test_connection()
+                st.success(f"Connecté en tant que **{user['name']}** ({user['email']})")
+            except AsanaClientError as e:
+                st.error(f"**Erreur Asana:** {e}")
+                st.info("Vérifiez que votre PAT est valide sur https://app.asana.com/0/my-apps")
 
+with col2:
     st.subheader("Google Sheets")
-    gsheet_url = st.text_input(
-        "URL du Spreadsheet",
-        value=os.getenv('GOOGLE_SPREADSHEET_URL', ''),
-        help="URL complète du Google Sheet de destination"
-    )
-    google_creds_path = st.text_input(
-        "Chemin credentials JSON",
-        value=os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials.json'),
-        help="Chemin vers le fichier Service Account JSON"
-    )
+    if st.button("📊 Tester Google Sheets", use_container_width=True):
+        if not gsheet_url:
+            st.error("**GOOGLE_SPREADSHEET_URL** non défini dans `.env`")
+        elif not google_creds_path:
+            st.error("**GOOGLE_CREDENTIALS_PATH** non défini dans `.env`")
+        elif not os.path.exists(google_creds_path):
+            st.error(f"**Fichier credentials introuvable:** `{google_creds_path}`")
+            st.info("Placez votre fichier `service-account.json` dans le dossier `credentials/`")
+        else:
+            try:
+                syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
+                info = syncer.test_connection()
+                st.success(f"Connecté au sheet **{info['title']}**")
+                st.caption(f"Onglets existants: {', '.join(info['sheets'])}")
+            except SheetsSyncError as e:
+                error_msg = str(e)
+                st.error(f"**Erreur Google Sheets:** {error_msg}")
+                if "not found" in error_msg.lower() or "introuvable" in error_msg.lower():
+                    st.info("Vérifiez que le Service Account a accès au Sheet (partage avec l'email du SA)")
+                elif "permission" in error_msg.lower():
+                    st.info("Partagez le Google Sheet avec l'email du Service Account (en éditeur)")
 
-    st.divider()
+st.divider()
 
-    # Test connexions
-    st.subheader("Tests de connexion")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("🔗 Test Asana", use_container_width=True):
-            if not asana_token:
-                st.error("Token requis")
-            else:
-                try:
-                    client = AsanaClient(asana_token)
-                    user = client.test_connection()
-                    st.success(f"✅ Connecté: {user['name']}")
-                except AsanaClientError as e:
-                    st.error(f"❌ {e}")
-
-    with col2:
-        if st.button("📊 Test Sheets", use_container_width=True):
-            if not gsheet_url or not google_creds_path:
-                st.error("Config requise")
-            elif not os.path.exists(google_creds_path):
-                st.error(f"Fichier introuvable: {google_creds_path}")
-            else:
-                try:
-                    syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
-                    info = syncer.test_connection()
-                    st.success(f"✅ {info['title']}")
-                except SheetsSyncError as e:
-                    st.error(f"❌ {e}")
-
-
-# === MAIN - Synchronisation ===
-st.header("Synchronisation")
+# === Synchronisation ===
+st.header("2. Synchronisation")
 
 # Vérification config
 config_ok = all([asana_token, asana_project_gid, gsheet_url, google_creds_path])
+creds_exist = os.path.exists(google_creds_path) if google_creds_path else False
 
 if not config_ok:
-    st.warning("⚠️ Configurez tous les paramètres dans la sidebar avant de synchroniser.")
+    st.warning("⚠️ Configuration incomplète. Éditez le fichier `.env` avec vos identifiants.")
+elif not creds_exist:
+    st.warning(f"⚠️ Fichier credentials introuvable: `{google_creds_path}`")
 else:
     col1, col2 = st.columns([1, 3])
 
@@ -157,7 +150,7 @@ else:
                     st.session_state.last_sync = result.timestamp
                     st.session_state.last_result = result
 
-                    st.success(f"✅ Synchronisation réussie! {result.total_rows} lignes mises à jour.")
+                    st.success(f"Synchronisation réussie! {result.total_rows} lignes mises à jour.")
 
                     # Afficher les métriques
                     st.subheader("📈 Résumé du Pipeline")
@@ -186,23 +179,23 @@ else:
                         )
 
                 else:
-                    st.error(f"❌ Erreur lors de la sync: {result.error}")
+                    st.error(f"Erreur lors de la sync: {result.error}")
 
                 progress.empty()
 
         except AsanaClientError as e:
             progress.empty()
-            st.error(f"❌ Erreur Asana: {e}")
+            st.error(f"**Erreur Asana:** {e}")
             logger.error(f"Erreur Asana: {e}")
 
         except SheetsSyncError as e:
             progress.empty()
-            st.error(f"❌ Erreur Google Sheets: {e}")
+            st.error(f"**Erreur Google Sheets:** {e}")
             logger.error(f"Erreur Sheets: {e}")
 
         except Exception as e:
             progress.empty()
-            st.error(f"❌ Erreur inattendue: {e}")
+            st.error(f"**Erreur inattendue:** {e}")
             logger.exception("Erreur inattendue")
 
 
