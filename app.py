@@ -31,8 +31,10 @@ st.markdown("Synchronisation Asana → Google Sheets pour le pilotage financier"
 # Initialiser le state
 if 'last_sync' not in st.session_state:
     st.session_state.last_sync = None
-if 'last_result' not in st.session_state:
-    st.session_state.last_result = None
+if 'preview_df' not in st.session_state:
+    st.session_state.preview_df = None
+if 'preview_summary' not in st.session_state:
+    st.session_state.preview_summary = None
 
 # Charger config depuis .env
 asana_token = os.getenv('ASANA_ACCESS_TOKEN', '')
@@ -88,8 +90,68 @@ with col2:
 
 st.divider()
 
+# === Aperçu des données ===
+st.header("2. Aperçu des données Asana")
+
+asana_config_ok = all([asana_token, asana_project_gid])
+
+if not asana_config_ok:
+    st.warning("⚠️ Configuration Asana incomplète.")
+else:
+    if st.button("📥 Récupérer les données Asana", use_container_width=False):
+        with st.spinner("Récupération en cours..."):
+            try:
+                asana_client = AsanaClient(asana_token)
+                tasks = asana_client.get_project_tasks(asana_project_gid)
+
+                if not tasks:
+                    st.warning("Aucun deal trouvé dans le projet Asana.")
+                else:
+                    calculator = PipelineCalculator(tasks)
+                    df = calculator.parse_tasks_to_dataframe()
+                    df = calculator.calculate_metrics()
+                    summary = calculator.get_summary_metrics()
+
+                    # Sauvegarder dans session state
+                    st.session_state.preview_df = df
+                    st.session_state.preview_summary = summary
+
+                    st.success(f"**{len(df)} deals** récupérés depuis Asana")
+
+            except AsanaClientError as e:
+                st.error(f"**Erreur Asana:** {e}")
+
+    # Afficher les données si disponibles
+    if st.session_state.preview_df is not None:
+        df = st.session_state.preview_df
+        summary = st.session_state.preview_summary
+
+        # Métriques
+        st.subheader("📈 Résumé")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Deals", summary.get('total_deals', 0))
+        m2.metric("Budget Total", f"{summary.get('total_budget', 0):,.0f} €")
+        m3.metric("Revenue Pondéré", f"{summary.get('total_revenue_pondere', 0):,.0f} €")
+        m4.metric("Marge Totale", f"{summary.get('total_marge', 0):,.0f} €")
+
+        # Tableau des données
+        st.subheader("📋 Détail des deals")
+
+        # Sélectionner les colonnes à afficher
+        display_cols = ['titre', 'client', 'projet', 'budget', 'marge', 'confidence_score',
+                       'probabilite_pct', 'revenue_pondere', 'section', 'mois']
+        available_cols = [c for c in display_cols if c in df.columns]
+
+        st.dataframe(df[available_cols], use_container_width=True)
+
+        # Données brutes (debug)
+        with st.expander("🔍 Voir toutes les colonnes (debug)"):
+            st.dataframe(df, use_container_width=True)
+
+st.divider()
+
 # === Synchronisation ===
-st.header("2. Synchronisation")
+st.header("3. Synchronisation vers Google Sheets")
 
 # Vérification config
 config_ok = all([asana_token, asana_project_gid, gsheet_url, google_creds_path])
@@ -99,6 +161,8 @@ if not config_ok:
     st.warning("⚠️ Configuration incomplète. Éditez le fichier `.env` avec vos identifiants.")
 elif not creds_exist:
     st.warning(f"⚠️ Fichier credentials introuvable: `{google_creds_path}`")
+elif st.session_state.preview_df is None:
+    st.info("👆 Récupérez d'abord les données Asana (section 2)")
 else:
     col1, col2 = st.columns([1, 3])
 
@@ -117,76 +181,29 @@ else:
         progress = st.progress(0, text="Initialisation...")
 
         try:
-            # Étape 1: Récupération Asana
-            progress.progress(10, text="Connexion à Asana...")
-            asana_client = AsanaClient(asana_token)
+            df = st.session_state.preview_df
 
-            progress.progress(20, text="Récupération des deals...")
-            tasks = asana_client.get_project_tasks(asana_project_gid)
+            # Préparer les données pour Sheets
+            progress.progress(30, text="Préparation des données...")
+            calculator = PipelineCalculator([])  # Dummy init
+            calculator.df = df
+            sheets_data = calculator.prepare_sheets_data()
 
-            if not tasks:
-                st.warning("Aucun deal trouvé dans le projet Asana.")
-                progress.empty()
+            # Sync Google Sheets
+            progress.progress(60, text="Synchronisation vers Google Sheets...")
+            syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
+            result = syncer.sync_pipeline(sheets_data)
+
+            progress.progress(100, text="Terminé!")
+
+            if result.success:
+                st.session_state.last_sync = result.timestamp
+                st.success(f"Synchronisation réussie! **{result.total_rows} lignes** envoyées vers Google Sheets.")
+                st.caption(f"Onglets mis à jour: {', '.join(result.sheets_updated)}")
             else:
-                # Étape 2: Calculs
-                progress.progress(40, text=f"Traitement de {len(tasks)} deals...")
-                calculator = PipelineCalculator(tasks)
-                df = calculator.parse_tasks_to_dataframe()
-                df = calculator.calculate_metrics()
+                st.error(f"Erreur lors de la sync: {result.error}")
 
-                # Préparer les données pour Sheets
-                progress.progress(60, text="Préparation des données...")
-                sheets_data = calculator.prepare_sheets_data()
-                summary = calculator.get_summary_metrics()
-
-                # Étape 3: Sync Google Sheets
-                progress.progress(80, text="Synchronisation vers Google Sheets...")
-                syncer = GoogleSheetsSync(google_creds_path, gsheet_url)
-                result = syncer.sync_pipeline(sheets_data)
-
-                progress.progress(100, text="Terminé!")
-
-                if result.success:
-                    st.session_state.last_sync = result.timestamp
-                    st.session_state.last_result = result
-
-                    st.success(f"Synchronisation réussie! {result.total_rows} lignes mises à jour.")
-
-                    # Afficher les métriques
-                    st.subheader("📈 Résumé du Pipeline")
-
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Deals", summary.get('total_deals', 0))
-                    m2.metric("Budget Total", f"{summary.get('total_budget', 0):,.0f} €")
-                    m3.metric("Revenue Pondéré", f"{summary.get('total_revenue_pondere', 0):,.0f} €")
-                    m4.metric("Marge Totale", f"{summary.get('total_marge', 0):,.0f} €")
-
-                    m5, m6, m7, m8 = st.columns(4)
-                    m5.metric("Scénario Conservateur", f"{summary.get('deals_conservateur', 0)} deals")
-                    m6.metric("Budget Conservateur", f"{summary.get('revenue_conservateur', 0):,.0f} €")
-                    m7.metric("Scénario Probable", f"{summary.get('deals_probable', 0)} deals")
-                    m8.metric("Budget Probable", f"{summary.get('revenue_probable', 0):,.0f} €")
-
-                    # Preview des données
-                    st.subheader("📋 Aperçu des données")
-                    with st.expander("Voir le pipeline complet", expanded=False):
-                        st.dataframe(
-                            df[[
-                                'titre', 'client', 'projet', 'budget', 'marge',
-                                'confidence_score', 'revenue_pondere', 'section'
-                            ]],
-                            use_container_width=True
-                        )
-
-                else:
-                    st.error(f"Erreur lors de la sync: {result.error}")
-
-                progress.empty()
-
-        except AsanaClientError as e:
             progress.empty()
-            st.error(f"**Erreur Asana:** {e}")
-            logger.error(f"Erreur Asana: {e}")
 
         except SheetsSyncError as e:
             progress.empty()
