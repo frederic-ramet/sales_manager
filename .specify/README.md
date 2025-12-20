@@ -12,6 +12,7 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 002 | **Lead Scraper** | Extraction SIRENE/Pappers + enrichissement | ✅ Done |
 | 003 | **UI Navigation** | Interface multi-page Streamlit | ✅ Done |
 | 004 | **GetSales Sync** | Sync leads LinkedIn → HubSpot | ✅ Done |
+| 005 | **Leads Hub** | Base centralisée + enrichissement bidirectionnel | 🆕 Draft |
 
 ---
 
@@ -33,9 +34,11 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 │   ├── 003-ui-navigation/
 │   │   ├── spec.md
 │   │   └── tasks.md
-│   └── 004-getsales-sync/
-│       ├── spec.md
-│       └── tasks.md
+│   ├── 004-getsales-sync/
+│   │   ├── spec.md
+│   │   └── tasks.md
+│   └── 005-leads-hub/
+│       └── spec.md
 └── _to_migrate_leadscraper/      # Code legacy (migré)
 ```
 
@@ -72,6 +75,15 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 - [x] Formulaire merge champ par champ
 - [x] Sync interactions → base locale
 
+### Phase 5 : Leads Hub (Module 005) 🆕
+- [ ] Migration BDD : colonnes source, hubspot_id, enriched_at
+- [ ] Page Base de Leads (vue unifiée multi-sources)
+- [ ] Import HubSpot → base locale
+- [ ] Enrichissement leads existants
+- [ ] Push enrichis vers HubSpot
+- [ ] Intégration GetSales → Base de Leads
+- [ ] Min leads = 1
+
 ---
 
 ## Temps estimés
@@ -82,6 +94,7 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 002 - Lead Scraper | ~22h | ✅ |
 | 003 - UI Navigation | ~11h | ✅ |
 | 004 - GetSales Sync | ~9 jours | ✅ |
+| 005 - Leads Hub | ~14h | - |
 
 ---
 
