@@ -12,7 +12,8 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 002 | **Lead Scraper** | Extraction SIRENE/Pappers + enrichissement | ✅ Done |
 | 003 | **UI Navigation** | Interface multi-page Streamlit | ✅ Done |
 | 004 | **GetSales Sync** | Sync leads LinkedIn → HubSpot | ✅ Done |
-| 005 | **Leads Hub** | Base centralisée + enrichissement bidirectionnel | 🆕 Draft |
+| 005 | **Leads Hub** | Base centralisée + enrichissement bidirectionnel | ⏸️ Suspendu |
+| 006 | **Unified Data Model** | Refonte modèle données unifié | 🆕 Prioritaire |
 
 ---
 
@@ -37,7 +38,9 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 │   ├── 004-getsales-sync/
 │   │   ├── spec.md
 │   │   └── tasks.md
-│   └── 005-leads-hub/
+│   ├── 005-leads-hub/
+│   │   └── spec.md
+│   └── 006-unified-data-model/
 │       └── spec.md
 └── _to_migrate_leadscraper/      # Code legacy (migré)
 ```
@@ -75,14 +78,29 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 - [x] Formulaire merge champ par champ
 - [x] Sync interactions → base locale
 
-### Phase 5 : Leads Hub (Module 005) 🆕
-- [ ] Migration BDD : colonnes source, hubspot_id, enriched_at
-- [ ] Page Base de Leads (vue unifiée multi-sources)
-- [ ] Import HubSpot → base locale
-- [ ] Enrichissement leads existants
-- [ ] Push enrichis vers HubSpot
-- [ ] Intégration GetSales → Base de Leads
-- [ ] Min leads = 1
+### Phase 5 : Leads Hub (Module 005) ⏸️ Suspendu
+> Suspendu en faveur de Epic 006 qui refonde le modèle de données.
+
+- [x] Migration BDD : colonnes source, hubspot_id, enriched_at (partiel)
+- [x] Page Base de Leads (vue unifiée multi-sources) - UI prête
+- [x] Min leads = 1
+- [ ] ~~Import HubSpot → base locale~~ → Epic 006
+- [ ] ~~Enrichissement leads existants~~ → Epic 006
+- [ ] ~~Push enrichis vers HubSpot~~ → Epic 006
+- [ ] ~~Intégration GetSales → Base de Leads~~ → Epic 006
+
+### Phase 6 : Unified Data Model (Module 006) 🆕 Prioritaire
+> Refonte complète du modèle de données (Option B - clean slate)
+
+- [ ] Créer `ContactManager` avec table `unified_contacts`
+- [ ] Supprimer ancien `LeadTracker` / `leads_history`
+- [ ] Adapter page Recherche Leads → `import_from_sirene()`
+- [ ] Adapter page Base de Leads → `ContactManager`
+- [ ] Intégration GetSales validés → `unified_contacts`
+- [ ] Import HubSpot → `unified_contacts`
+- [ ] Export/Sync vers HubSpot
+- [ ] Enrichissement Pappers avec traçabilité
+- [ ] Déduplication cross-sources (email, SIREN, LinkedIn)
 
 ---
 
@@ -94,7 +112,8 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 002 - Lead Scraper | ~22h | ✅ |
 | 003 - UI Navigation | ~11h | ✅ |
 | 004 - GetSales Sync | ~9 jours | ✅ |
-| 005 - Leads Hub | ~14h | - |
+| 005 - Leads Hub | ~14h | ⏸️ Partiel |
+| 006 - Unified Data Model | ~16h | - |
 
 ---
 
