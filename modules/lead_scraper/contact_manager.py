@@ -127,16 +127,22 @@ class ContactManager:
                 )
             """)
 
-            # Indexes pour performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_source ON unified_contacts(source)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_email ON unified_contacts(email)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_siren ON unified_contacts(siren)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_campaign ON unified_contacts(campaign_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_hubspot ON unified_contacts(hubspot_contact_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_linkedin ON unified_contacts(linkedin_url)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_status ON unified_contacts(status)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_created ON unified_contacts(created_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_getsales ON unified_contacts(getsales_uuid)")
+            # Indexes pour performance - seulement si c'est une table (pas une vue)
+            # Après migration, unified_contacts devient une vue et on ne peut pas l'indexer
+            cursor.execute("SELECT type FROM sqlite_master WHERE name='unified_contacts'")
+            result = cursor.fetchone()
+            is_table = result and result[0] == 'table'
+
+            if is_table:
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_source ON unified_contacts(source)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_email ON unified_contacts(email)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_siren ON unified_contacts(siren)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_campaign ON unified_contacts(campaign_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_hubspot ON unified_contacts(hubspot_contact_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_linkedin ON unified_contacts(linkedin_url)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_status ON unified_contacts(status)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_created ON unified_contacts(created_at)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_getsales ON unified_contacts(getsales_uuid)")
 
             # Table de métadonnées de synchronisation
             cursor.execute("""

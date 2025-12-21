@@ -63,13 +63,23 @@ with tab_main:
     )
 
     # Import CompanyManager si nouveau schéma disponible
+    # Vérifie aussi que la table companies existe dans la base
+    COMPANY_SCHEMA_AVAILABLE = False
+    company_manager = None
     try:
         from modules.lead_scraper import CompanyManager
-        COMPANY_SCHEMA_AVAILABLE = True
-        company_manager = CompanyManager()
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent / "data" / "leads.db"
+        if db_path.exists():
+            with sqlite3.connect(str(db_path)) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='companies'")
+                if cursor.fetchone():
+                    COMPANY_SCHEMA_AVAILABLE = True
+                    company_manager = CompanyManager()
     except ImportError:
-        COMPANY_SCHEMA_AVAILABLE = False
-        company_manager = None
+        pass
 
     # Import HubSpot si disponible
     hubspot_client = None

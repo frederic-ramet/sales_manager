@@ -12,11 +12,21 @@ from modules.deduplication import DeduplicationMatcher
 from components import render_top_nav, hide_sidebar, render_footer
 
 # Import CompanyManager si nouveau schéma disponible
+# Vérifie aussi que la table companies existe dans la base
+COMPANY_SCHEMA_AVAILABLE = False
 try:
     from modules.lead_scraper import CompanyManager
-    COMPANY_SCHEMA_AVAILABLE = True
+    import sqlite3
+    from pathlib import Path
+    db_path = Path(__file__).parent.parent / "data" / "leads.db"
+    if db_path.exists():
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='companies'")
+            if cursor.fetchone():
+                COMPANY_SCHEMA_AVAILABLE = True
 except ImportError:
-    COMPANY_SCHEMA_AVAILABLE = False
+    pass
 
 
 def load_referentiel(filepath: str):
