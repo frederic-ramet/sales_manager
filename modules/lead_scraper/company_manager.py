@@ -229,6 +229,11 @@ class CompanyManager:
             'status': 'status',
             'notes': 'notes',
             'tags': 'tags',
+            # Champs classification SIREN v2
+            'segment': 'segment',
+            'prospect_class': 'prospect_class',
+            'prospect_class_points': 'prospect_class_points',
+            'prospect_class_signals': 'prospect_class_signals',
         }
 
         fields_to_update = []
@@ -859,4 +864,321 @@ class CompanyManager:
                 ORDER BY total_contacts DESC
                 LIMIT ?
             """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    # =========================================================================
+    # CLASSIFICATION & SEGMENTATION (SIREN v2)
+    # =========================================================================
+
+    def set_segment(self, company_id: int, segment: str) -> bool:
+        """
+        Définit le segment d'une entreprise.
+
+        Args:
+            company_id: ID de l'entreprise
+            segment: Segment à assigner ('ICP Principal', 'ICP Opportuniste', etc.)
+
+        Returns:
+            True si mis à jour
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE companies SET segment = ?, updated_at = ?
+                WHERE id = ?
+            """, (segment, datetime.now(), company_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def set_segment_batch(self, company_ids: List[int], segment: str) -> int:
+        """
+        Définit le segment pour plusieurs entreprises.
+
+        Args:
+            company_ids: Liste des IDs
+            segment: Segment à assigner
+
+        Returns:
+            Nombre d'entreprises mises à jour
+        """
+        if not company_ids:
+            return 0
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            placeholders = ','.join(['?' for _ in company_ids])
+            cursor.execute(f"""
+                UPDATE companies SET segment = ?, updated_at = ?
+                WHERE id IN ({placeholders})
+            """, [segment, datetime.now()] + list(company_ids))
+            conn.commit()
+            return cursor.rowcount
+
+    def classify_company(self, company_id: int) -> Dict[str, Any]:
+        """
+        Classifie une entreprise avec ProspectClassifier.
+
+        Args:
+            company_id: ID de l'entreprise
+
+        Returns:
+            Dict avec résultat de classification
+        """
+        from .scoring import ProspectClassifier
+
+        company = self.get_company(company_id)
+        if not company:
+            raise ValueError(f"Entreprise {company_id} non trouvée")
+
+        classifier = ProspectClassifier()
+        result = classifier.classify(company)
+
+        # Sauvegarder la classification
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE companies SET
+                    prospect_class = ?,
+                    prospect_class_points = ?,
+                    prospect_class_signals = ?,
+                    updated_at = ?
+                WHERE id = ?
+            """, (
+                result['prospect_class'],
+                result['points'],
+                json.dumps(result['signals'], ensure_ascii=False),
+                datetime.now(),
+                company_id
+            ))
+            conn.commit()
+
+        return result
+
+    def classify_batch(self, company_ids: List[int] = None) -> Dict[str, Any]:
+        """
+        Classifie plusieurs entreprises.
+
+        Args:
+            company_ids: Liste des IDs (si None, classifie toutes les non-classifiées)
+
+        Returns:
+            Dict avec statistiques de classification
+        """
+        from .scoring import ProspectClassifier
+
+        classifier = ProspectClassifier()
+        stats = {'total': 0, 'A': 0, 'B': 0, 'C': 0}
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if company_ids:
+                placeholders = ','.join(['?' for _ in company_ids])
+                cursor.execute(f"""
+                    SELECT * FROM companies WHERE id IN ({placeholders})
+                """, company_ids)
+            else:
+                # Classifie les entreprises sans classification
+                cursor.execute("""
+                    SELECT * FROM companies
+                    WHERE prospect_class IS NULL AND status = 'active'
+                """)
+
+            companies = [dict(row) for row in cursor.fetchall()]
+
+            for company in companies:
+                result = classifier.classify(company)
+                cursor.execute("""
+                    UPDATE companies SET
+                        prospect_class = ?,
+                        prospect_class_points = ?,
+                        prospect_class_signals = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (
+                    result['prospect_class'],
+                    result['points'],
+                    json.dumps(result['signals'], ensure_ascii=False),
+                    datetime.now(),
+                    company['id']
+                ))
+                stats['total'] += 1
+                stats[result['prospect_class']] += 1
+
+            conn.commit()
+
+        return stats
+
+    def get_companies_by_class(
+        self,
+        prospect_class: str,
+        segment: str = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère les entreprises par classe de prospect.
+
+        Args:
+            prospect_class: 'A', 'B', ou 'C'
+            segment: Filtrer par segment (optionnel)
+            limit: Nombre max de résultats
+
+        Returns:
+            Liste d'entreprises
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if segment:
+                cursor.execute("""
+                    SELECT * FROM companies
+                    WHERE prospect_class = ? AND segment = ? AND status = 'active'
+                    ORDER BY prospect_class_points DESC
+                    LIMIT ?
+                """, (prospect_class, segment, limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM companies
+                    WHERE prospect_class = ? AND status = 'active'
+                    ORDER BY prospect_class_points DESC
+                    LIMIT ?
+                """, (prospect_class, limit))
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_classification_stats(self) -> Dict[str, Any]:
+        """
+        Récupère les statistiques de classification.
+
+        Returns:
+            Dict avec stats par classe et segment
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            # Par classe
+            cursor.execute("""
+                SELECT prospect_class, COUNT(*) as count
+                FROM companies
+                WHERE status = 'active' AND prospect_class IS NOT NULL
+                GROUP BY prospect_class
+            """)
+            by_class = {row[0]: row[1] for row in cursor.fetchall()}
+
+            # Par segment
+            cursor.execute("""
+                SELECT segment, COUNT(*) as count
+                FROM companies
+                WHERE status = 'active' AND segment IS NOT NULL
+                GROUP BY segment
+            """)
+            by_segment = {row[0]: row[1] for row in cursor.fetchall()}
+
+            # Non classifiées
+            cursor.execute("""
+                SELECT COUNT(*) FROM companies
+                WHERE status = 'active' AND prospect_class IS NULL
+            """)
+            unclassified = cursor.fetchone()[0]
+
+            return {
+                'by_class': by_class,
+                'by_segment': by_segment,
+                'unclassified': unclassified,
+                'total_classified': sum(by_class.values())
+            }
+
+    def add_tag(self, company_id: int, tag: str) -> bool:
+        """
+        Ajoute un tag à une entreprise.
+
+        Args:
+            company_id: ID de l'entreprise
+            tag: Tag à ajouter
+
+        Returns:
+            True si ajouté
+        """
+        company = self.get_company(company_id)
+        if not company:
+            return False
+
+        # Parser les tags existants
+        existing_tags = []
+        if company.get('tags'):
+            try:
+                existing_tags = json.loads(company['tags'])
+            except (json.JSONDecodeError, TypeError):
+                existing_tags = []
+
+        # Ajouter le nouveau tag s'il n'existe pas
+        if tag not in existing_tags:
+            existing_tags.append(tag)
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE companies SET tags = ?, updated_at = ?
+                WHERE id = ?
+            """, (json.dumps(existing_tags, ensure_ascii=False), datetime.now(), company_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def remove_tag(self, company_id: int, tag: str) -> bool:
+        """
+        Supprime un tag d'une entreprise.
+
+        Args:
+            company_id: ID de l'entreprise
+            tag: Tag à supprimer
+
+        Returns:
+            True si supprimé
+        """
+        company = self.get_company(company_id)
+        if not company:
+            return False
+
+        existing_tags = []
+        if company.get('tags'):
+            try:
+                existing_tags = json.loads(company['tags'])
+            except (json.JSONDecodeError, TypeError):
+                existing_tags = []
+
+        if tag in existing_tags:
+            existing_tags.remove(tag)
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE companies SET tags = ?, updated_at = ?
+                WHERE id = ?
+            """, (json.dumps(existing_tags, ensure_ascii=False), datetime.now(), company_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_companies_by_tag(self, tag: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Récupère les entreprises par tag.
+
+        Args:
+            tag: Tag à rechercher
+            limit: Nombre max de résultats
+
+        Returns:
+            Liste d'entreprises
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            # Recherche JSON (SQLite LIKE pour simplifier)
+            cursor.execute("""
+                SELECT * FROM companies
+                WHERE status = 'active' AND tags LIKE ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (f'%"{tag}"%', limit))
             return [dict(row) for row in cursor.fetchall()]
