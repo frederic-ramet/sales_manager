@@ -384,22 +384,88 @@ with tab_main:
                         - 🏢 {contact.get('company', 'N/A')}
                         """)
 
+                # === Entreprises HubSpot ===
+                company_name = lead_data.get('company_name', '')
+                if company_name:
+                    st.divider()
+                    if lead.company_matches:
+                        st.markdown(f"**🏢 Entreprises HubSpot trouvées** ({len(lead.company_matches)})")
+
+                        for i, company in enumerate(lead.company_matches):
+                            match_icon = "🟢" if company.get('match_type') == 'exact' else "🟡"
+                            with st.container():
+                                col1, col2 = st.columns([3, 1])
+                                with col1:
+                                    st.markdown(f"""
+                                    {match_icon} **{company.get('name', 'N/A')}**
+                                    - 🌐 {company.get('domain', 'N/A') or 'Pas de domaine'}
+                                    - 📍 {company.get('city', 'N/A') or 'N/A'}
+                                    - 🏭 {company.get('industry', 'N/A') or 'N/A'}
+                                    """)
+                                with col2:
+                                    if lead.validation_status == 'pending':
+                                        selected = st.session_state.get(f'selected_company_{lead.id}') == company.get('id')
+                                        if st.button(
+                                            "✅ Sélectionné" if selected else "Utiliser",
+                                            key=f"select_company_{lead.id}_{i}",
+                                            use_container_width=True,
+                                            type="primary" if selected else "secondary"
+                                        ):
+                                            if selected:
+                                                del st.session_state[f'selected_company_{lead.id}']
+                                            else:
+                                                st.session_state[f'selected_company_{lead.id}'] = company.get('id')
+                                            st.rerun()
+
+                        # Option créer nouvelle entreprise
+                        if lead.validation_status == 'pending':
+                            create_new_selected = st.session_state.get(f'selected_company_{lead.id}') == 'create_new'
+                            if st.button(
+                                "➕ Créer nouvelle entreprise" + (" ✅" if create_new_selected else ""),
+                                key=f"create_new_company_{lead.id}",
+                                use_container_width=True,
+                                type="primary" if create_new_selected else "secondary"
+                            ):
+                                if create_new_selected:
+                                    del st.session_state[f'selected_company_{lead.id}']
+                                else:
+                                    st.session_state[f'selected_company_{lead.id}'] = 'create_new'
+                                st.rerun()
+                    else:
+                        st.markdown(f"**🏢 Entreprise: {company_name}**")
+                        st.info("ℹ️ Aucune entreprise correspondante trouvée dans HubSpot. Une nouvelle sera créée.")
+
                 # Message si aucun doublon
                 if not lead.local_matches and not lead.hubspot_matches:
-                    st.success("✅ Aucun doublon détecté")
+                    st.success("✅ Aucun doublon contact détecté")
 
                 # Actions (si pending)
                 if lead.validation_status == 'pending' and sync_service:
                     st.divider()
+
+                    # Récupérer le choix de company
+                    selected_company = st.session_state.get(f'selected_company_{lead.id}')
+
                     col1, col2, col3 = st.columns(3)
 
                     with col1:
                         if st.button("✅ Créer nouveau", key=f"create_{lead.id}", use_container_width=True):
                             try:
+                                # Préparer les données de company
+                                company_data = None
+                                if selected_company and selected_company != 'create_new':
+                                    company_data = {'use_existing_company_id': selected_company}
+                                elif selected_company == 'create_new':
+                                    company_data = {'create_new_company': True}
+
                                 result = sync_service.validate_lead(
                                     pending_lead_id=lead.id,
-                                    action='create_new'
+                                    action='create_new',
+                                    merge_data=company_data
                                 )
+                                # Nettoyer la session
+                                if f'selected_company_{lead.id}' in st.session_state:
+                                    del st.session_state[f'selected_company_{lead.id}']
                                 st.success(result['message'])
                                 st.rerun()
                             except Exception as e:

@@ -23,6 +23,7 @@ class PendingLead:
     getsales_data: Dict[str, Any] = field(default_factory=dict)
     hubspot_matches: List[Dict[str, Any]] = field(default_factory=list)
     local_matches: List[Dict[str, Any]] = field(default_factory=list)  # Doublons dans unified_contacts
+    company_matches: List[Dict[str, Any]] = field(default_factory=list)  # Companies HubSpot potentielles
     duplicate_status: str = "none"  # none, potential, confirmed
     validation_status: str = "pending"  # pending, approved, rejected
     merge_decision: Optional[Dict[str, Any]] = None
@@ -108,11 +109,13 @@ class GetSalesDB:
                 )
             """)
 
-            # Migration: ajouter local_matches si colonne n'existe pas
+            # Migration: ajouter colonnes si elles n'existent pas
             cursor.execute("PRAGMA table_info(pending_leads)")
             columns = [col[1] for col in cursor.fetchall()]
             if 'local_matches' not in columns:
                 cursor.execute("ALTER TABLE pending_leads ADD COLUMN local_matches TEXT DEFAULT '[]'")
+            if 'company_matches' not in columns:
+                cursor.execute("ALTER TABLE pending_leads ADD COLUMN company_matches TEXT DEFAULT '[]'")
 
             # Index sur getsales_uuid et validation_status
             cursor.execute("""
@@ -180,6 +183,7 @@ class GetSalesDB:
             getsales_data_json = json.dumps(lead.getsales_data, ensure_ascii=False)
             hubspot_matches_json = json.dumps(lead.hubspot_matches, ensure_ascii=False)
             local_matches_json = json.dumps(lead.local_matches, ensure_ascii=False)
+            company_matches_json = json.dumps(lead.company_matches, ensure_ascii=False)
             merge_decision_json = json.dumps(lead.merge_decision) if lead.merge_decision else None
 
             if lead.id:
@@ -189,6 +193,7 @@ class GetSalesDB:
                         getsales_data = ?,
                         hubspot_matches = ?,
                         local_matches = ?,
+                        company_matches = ?,
                         duplicate_status = ?,
                         validation_status = ?,
                         merge_decision = ?,
@@ -199,6 +204,7 @@ class GetSalesDB:
                     getsales_data_json,
                     hubspot_matches_json,
                     local_matches_json,
+                    company_matches_json,
                     lead.duplicate_status,
                     lead.validation_status,
                     merge_decision_json,
@@ -213,13 +219,14 @@ class GetSalesDB:
                 try:
                     cursor.execute("""
                         INSERT INTO pending_leads
-                        (getsales_uuid, getsales_data, hubspot_matches, local_matches, duplicate_status, validation_status)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        (getsales_uuid, getsales_data, hubspot_matches, local_matches, company_matches, duplicate_status, validation_status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (
                         lead.getsales_uuid,
                         getsales_data_json,
                         hubspot_matches_json,
                         local_matches_json,
+                        company_matches_json,
                         lead.duplicate_status,
                         lead.validation_status
                     ))
@@ -232,12 +239,14 @@ class GetSalesDB:
                             getsales_data = ?,
                             hubspot_matches = ?,
                             local_matches = ?,
+                            company_matches = ?,
                             duplicate_status = ?
                         WHERE getsales_uuid = ?
                     """, (
                         getsales_data_json,
                         hubspot_matches_json,
                         local_matches_json,
+                        company_matches_json,
                         lead.duplicate_status,
                         lead.getsales_uuid
                     ))
@@ -323,14 +332,17 @@ class GetSalesDB:
 
     def _row_to_pending_lead(self, row: sqlite3.Row) -> PendingLead:
         """Convertit une row SQLite en PendingLead."""
-        # Gérer local_matches avec fallback pour anciennes entrées
-        local_matches_raw = row['local_matches'] if 'local_matches' in row.keys() else '[]'
+        # Gérer les colonnes avec fallback pour anciennes entrées
+        columns = row.keys()
+        local_matches_raw = row['local_matches'] if 'local_matches' in columns else '[]'
+        company_matches_raw = row['company_matches'] if 'company_matches' in columns else '[]'
         return PendingLead(
             id=row['id'],
             getsales_uuid=row['getsales_uuid'],
             getsales_data=json.loads(row['getsales_data']),
             hubspot_matches=json.loads(row['hubspot_matches']),
             local_matches=json.loads(local_matches_raw) if local_matches_raw else [],
+            company_matches=json.loads(company_matches_raw) if company_matches_raw else [],
             duplicate_status=row['duplicate_status'],
             validation_status=row['validation_status'],
             merge_decision=json.loads(row['merge_decision']) if row['merge_decision'] else None,

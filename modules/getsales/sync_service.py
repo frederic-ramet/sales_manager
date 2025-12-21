@@ -140,6 +140,9 @@ class GetSalesSyncService:
                     if local_matches and duplicate_status == 'none':
                         duplicate_status = 'potential'
 
+                # Chercher les companies HubSpot correspondantes
+                company_matches = self._find_company_matches(lead)
+
                 # Créer ou mettre à jour le pending lead
                 pending = PendingLead(
                     id=existing.id if existing else None,
@@ -147,6 +150,7 @@ class GetSalesSyncService:
                     getsales_data=lead,
                     hubspot_matches=[d.to_dict() for d in duplicates],
                     local_matches=local_matches,
+                    company_matches=company_matches,
                     duplicate_status=duplicate_status,
                     validation_status=existing.validation_status if existing else 'pending'
                 )
@@ -227,8 +231,16 @@ class GetSalesSyncService:
                 }
 
             elif action == 'create_new':
+                # Extraire le choix de company depuis merge_data
+                company_choice = None
+                if merge_data:
+                    if merge_data.get('use_existing_company_id'):
+                        company_choice = {'type': 'existing', 'id': merge_data['use_existing_company_id']}
+                    elif merge_data.get('create_new_company'):
+                        company_choice = {'type': 'create_new'}
+
                 # Créer nouveau contact HubSpot
-                contact = self._create_hubspot_contact(getsales_data)
+                contact = self._create_hubspot_contact(getsales_data, company_choice=company_choice)
 
                 # Sync interactions
                 self._sync_interactions(
@@ -242,10 +254,15 @@ class GetSalesSyncService:
                     status='approved'
                 )
 
+                # Message avec info company
+                company_msg = ""
+                if contact.get('company_id'):
+                    company_msg = f" + Company {contact['company_id']}"
+
                 return {
                     'success': True,
                     'hubspot_contact_id': contact['id'],
-                    'message': f"Contact créé: {contact['id']}"
+                    'message': f"Contact créé: {contact['id']}{company_msg}"
                 }
 
             elif action == 'merge':
@@ -284,12 +301,20 @@ class GetSalesSyncService:
             logger.error(f"Erreur validation lead {pending_lead_id}: {e}")
             raise
 
-    def _create_hubspot_contact(self, getsales_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _create_hubspot_contact(
+        self,
+        getsales_data: Dict[str, Any],
+        company_choice: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Crée un nouveau contact dans HubSpot avec association à une company.
 
         Args:
             getsales_data: Données du lead GetSales
+            company_choice: Choix de company fait par l'utilisateur:
+                - None: auto-detect (chercher ou créer)
+                - {'type': 'existing', 'id': '123'}: utiliser company existante
+                - {'type': 'create_new'}: forcer création nouvelle company
 
         Returns:
             Contact créé avec 'id' et 'company_id' (si associé)
@@ -333,32 +358,51 @@ class GetSalesSyncService:
         company_name = getsales_data.get('company_name')
         if company_name:
             try:
-                # Récupérer le domaine si disponible
-                domain = getsales_data.get('domain')
+                company_id = None
 
-                # Chercher ou créer la company
-                company_result = self.hubspot.get_or_create_company(
-                    name=company_name,
-                    domain=domain,
-                    additional_properties={
+                # Cas 1: Utiliser une company existante (choisie par l'utilisateur)
+                if company_choice and company_choice.get('type') == 'existing':
+                    company_id = company_choice['id']
+                    logger.info(f"Utilisation company existante choisie: ID {company_id}")
+
+                # Cas 2: Forcer la création d'une nouvelle company
+                elif company_choice and company_choice.get('type') == 'create_new':
+                    domain = getsales_data.get('domain')
+                    new_company = self.hubspot.create_company({
+                        'name': company_name,
+                        'domain': domain,
                         'city': getsales_data.get('company_city'),
                         'industry': getsales_data.get('company_industry'),
-                    }
-                )
+                    })
+                    if new_company:
+                        company_id = new_company['id']
+                        logger.info(f"Nouvelle company créée (forcé): {company_name} (ID: {company_id})")
 
-                if company_result:
-                    company_id = company_result['id']
-                    action = "trouvée" if not company_result.get('created') else "créée"
-                    logger.info(f"Company {action}: {company_name} (ID: {company_id})")
+                # Cas 3: Auto-detect (comportement par défaut)
+                else:
+                    domain = getsales_data.get('domain')
+                    company_result = self.hubspot.get_or_create_company(
+                        name=company_name,
+                        domain=domain,
+                        additional_properties={
+                            'city': getsales_data.get('company_city'),
+                            'industry': getsales_data.get('company_industry'),
+                        }
+                    )
+                    if company_result:
+                        company_id = company_result['id']
+                        action = "trouvée" if not company_result.get('created') else "créée"
+                        logger.info(f"Company {action} (auto): {company_name} (ID: {company_id})")
 
-                    # 3. Associer le contact à la company
+                # 3. Associer le contact à la company
+                if company_id:
                     if self.hubspot.associate_contact_company(contact_id, company_id):
                         result['company_id'] = company_id
                         logger.info(f"Contact {contact_id} associé à company {company_id}")
                     else:
                         logger.warning(f"Échec association contact-company")
                 else:
-                    logger.warning(f"Impossible de créer/trouver company: {company_name}")
+                    logger.warning(f"Aucune company à associer pour: {company_name}")
 
             except Exception as e:
                 logger.error(f"Erreur gestion company: {e}")
@@ -523,6 +567,49 @@ class GetSalesSyncService:
 
         # Convertir MatchResult en dict pour stockage JSON
         return [match.to_dict() for match in matches]
+
+    def _find_company_matches(self, lead: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Trouve les companies HubSpot correspondant au lead.
+
+        Recherche par nom d'entreprise et domaine.
+
+        Args:
+            lead: Données du lead GetSales
+
+        Returns:
+            Liste de companies avec 'id', 'name', 'domain', 'match_type'
+        """
+        company_name = lead.get('company_name')
+        if not company_name:
+            return []
+
+        matches = []
+        domain = lead.get('domain')
+
+        try:
+            # Recherche par nom exact
+            result = self.hubspot.search_company(name=company_name, domain=domain)
+
+            if result:
+                props = result.get('properties', {})
+                matches.append({
+                    'id': result['id'],
+                    'name': props.get('name', company_name),
+                    'domain': props.get('domain', ''),
+                    'city': props.get('city', ''),
+                    'industry': props.get('industry', ''),
+                    'employees': props.get('numberofemployees', ''),
+                    'match_type': 'exact' if props.get('name', '').lower() == company_name.lower() else 'fuzzy'
+                })
+                logger.debug(f"Company HubSpot trouvée: {props.get('name')}")
+            else:
+                logger.debug(f"Aucune company HubSpot trouvée pour: {company_name}")
+
+        except Exception as e:
+            logger.error(f"Erreur recherche company HubSpot: {e}")
+
+        return matches
 
     def get_sync_status(self) -> Dict[str, Any]:
         """
