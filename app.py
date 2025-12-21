@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 # Navigation top bar
-from components import render_top_nav, hide_sidebar
+from components import render_top_nav, hide_sidebar, render_footer
 hide_sidebar()
 
 st.title("🏭 Sales Ops Portal")
@@ -32,34 +32,8 @@ st.divider()
 # === Statut des modules ===
 col1, col2 = st.columns(2)
 
-# --- Module 1: Dashboard CFO ---
+# --- Module 1: Lead Scraper ---
 with col1:
-    st.subheader("📊 Dashboard Pipeline CFO")
-    st.markdown("Synchronisation Asana → Google Sheets")
-
-    # Vérifier la config
-    asana_ok = bool(os.getenv('ASANA_ACCESS_TOKEN')) and bool(os.getenv('ASANA_PROJECT_GID'))
-    sheets_ok = bool(os.getenv('GOOGLE_SPREADSHEET_URL')) and os.path.exists(
-        os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials/service-account.json')
-    )
-
-    if asana_ok and sheets_ok:
-        st.success("✅ Configuré")
-    elif asana_ok:
-        st.warning("⚠️ Google Sheets non configuré")
-    elif sheets_ok:
-        st.warning("⚠️ Asana non configuré")
-    else:
-        st.error("❌ Non configuré")
-
-    # Dernière sync
-    if 'last_sync' in st.session_state and st.session_state.last_sync:
-        st.caption(f"Dernière sync: {st.session_state.last_sync}")
-
-    st.page_link("pages/1_📊_Pipeline_CFO.py", label="Ouvrir le Dashboard CFO", icon="📊")
-
-# --- Module 2: Lead Scraper ---
-with col2:
     st.subheader("🎯 Lead Scraper")
     st.markdown("Recherche et enrichissement de leads B2B")
 
@@ -80,11 +54,8 @@ with col2:
 
     st.page_link("pages/2_🎯_Recherche_Leads.py", label="Ouvrir Lead Scraper", icon="🎯")
 
-# --- Module 3: GetSales Sync ---
-st.divider()
-col3, col4 = st.columns(2)
-
-with col3:
+# --- Module 2: GetSales Sync ---
+with col2:
     st.subheader("🔄 GetSales Sync")
     st.markdown("Synchronisation leads LinkedIn → HubSpot")
 
@@ -102,9 +73,6 @@ with col3:
         st.error("❌ Non configuré")
 
     st.page_link("pages/4_🔄_GetSales_Sync.py", label="Ouvrir GetSales Sync", icon="🔄")
-
-with col4:
-    st.empty()  # Placeholder pour futurs modules
 
 st.divider()
 
@@ -128,5 +96,4 @@ with col3:
     st.markdown("- Voir `.specify/` pour les specs")
     st.markdown("- README.md pour le guide")
 
-st.divider()
-st.caption("Sales Ops Portal - Genie Factory")
+render_footer()

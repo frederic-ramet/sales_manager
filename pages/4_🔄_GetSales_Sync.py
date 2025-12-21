@@ -8,7 +8,7 @@ from datetime import datetime
 
 import streamlit as st
 from dotenv import load_dotenv
-from components import render_top_nav, hide_sidebar
+from components import render_top_nav, hide_sidebar, render_footer
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -581,3 +581,6 @@ with tab_main:
     with col2:
         if st.button("🔄 Rafraîchir", use_container_width=True):
             st.rerun()
+
+# Footer
+render_footer()

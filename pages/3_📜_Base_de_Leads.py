@@ -8,7 +8,7 @@ from datetime import datetime
 
 from modules.lead_scraper import ContactManager, HubSpotClient, PappersClient, CSVImporter
 from modules.deduplication import DeduplicationMatcher
-from components import render_top_nav, hide_sidebar
+from components import render_top_nav, hide_sidebar, render_footer
 
 # Navigation
 hide_sidebar()
@@ -772,3 +772,6 @@ col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
     if st.button("🔄 Rafraîchir", use_container_width=True):
         st.rerun()
+
+# Footer
+render_footer()

@@ -20,7 +20,7 @@ from modules.lead_scraper import (
     ContactManager,
     HubSpotClient
 )
-from components import render_top_nav, hide_sidebar
+from components import render_top_nav, hide_sidebar, render_footer
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
@@ -528,3 +528,6 @@ with tab_main:
             st.session_state.extraction_status = 'idle'
             st.session_state.logs = []
             st.rerun()
+
+# Footer
+render_footer()

@@ -6,13 +6,17 @@ import streamlit as st
 from pathlib import Path
 
 
-# Pages disponibles
+# Pages disponibles (navigation principale)
 PAGES = [
     {"icon": "🏭", "name": "Accueil", "path": "app.py"},
-    {"icon": "📊", "name": "Pipeline CFO", "path": "pages/1_📊_Pipeline_CFO.py"},
     {"icon": "🎯", "name": "Recherche", "path": "pages/2_🎯_Recherche_Leads.py"},
     {"icon": "📜", "name": "Base Leads", "path": "pages/3_📜_Base_de_Leads.py"},
     {"icon": "🔄", "name": "GetSales", "path": "pages/4_🔄_GetSales_Sync.py"},
+]
+
+# Utilitaires (footer)
+UTILITY_PAGES = [
+    {"icon": "🔄", "name": "Sync Pipeline", "path": "pages/1_📊_Pipeline_CFO.py"},
 ]
 
 
@@ -107,3 +111,33 @@ def render_top_nav(current_page: str = None):
 
     # Ligne de séparation
     st.markdown("---")
+
+
+def render_footer():
+    """
+    Affiche le footer avec les liens utilitaires.
+    """
+    st.divider()
+
+    # Créer un conteneur pour le footer
+    st.markdown("""
+    <style>
+        .footer-container {
+            padding: 1rem 0;
+            margin-top: 2rem;
+            text-align: center;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Liens utilitaires
+    cols = st.columns([1, 2, 1])
+    with cols[1]:
+        for utility in UTILITY_PAGES:
+            st.page_link(
+                utility['path'],
+                label=f"{utility['icon']} {utility['name']}",
+                icon=utility['icon']
+            )
+
+    st.caption("Sales Ops Portal - Genie Factory")

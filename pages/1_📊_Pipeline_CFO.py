@@ -12,7 +12,7 @@ import logging
 from core.asana_client import AsanaClient, AsanaClientError
 from core.sheets_sync import GoogleSheetsSync, SheetsSyncError
 from core.scheduler import SyncScheduler
-from components import render_top_nav, hide_sidebar
+from components import render_top_nav, hide_sidebar, render_footer
 
 # Configuration logging
 logging.basicConfig(level=logging.INFO)
@@ -312,3 +312,6 @@ with tab_main:
                     st.success(f"✅ Dernier sync: {status['last_run']}")
                 else:
                     st.error(f"❌ Dernier sync: {status['last_run']} - {status['last_status']}")
+
+# Footer
+render_footer()
