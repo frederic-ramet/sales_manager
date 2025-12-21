@@ -14,7 +14,7 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 004 | **GetSales Sync** | Sync leads LinkedIn → HubSpot | ✅ Done |
 | 005 | **Leads Hub** | Base centralisée + enrichissement bidirectionnel | ✅ Done (via 006) |
 | 006 | **Unified Data Model** | Refonte modèle données unifié | ✅ Done |
-| 007 | **Top Navigation** | Navigation haut de page + masquer sidebar | 🔲 Todo |
+| 007 | **Top Navigation** | Navigation haut de page + masquer sidebar | ✅ Done |
 | 008 | **CSV Import** | Import manuel CSV avec mapping colonnes | 🔲 Todo |
 
 ---
@@ -108,14 +108,14 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 - [x] Enrichissement Pappers avec traçabilité
 - [x] Déduplication cross-sources (email, SIREN, LinkedIn)
 
-### Phase 7 : Top Navigation (Module 007) 🔲 Todo
+### Phase 7 : Top Navigation (Module 007) ✅ Done
 > Refonte navigation : top bar + masquer sidebar
 
-- [ ] T7.1 - Masquer sidebar globalement (CSS + config)
-- [ ] T7.2 - Créer composant navigation top bar
-- [ ] T7.3 - Intégrer navigation dans toutes les pages
-- [ ] T7.4 - Migrer filtres Recherche Leads dans la page
-- [ ] T7.5 - Nettoyer les autres pages
+- [x] T7.1 - Masquer sidebar globalement (CSS + config)
+- [x] T7.2 - Créer composant navigation top bar
+- [x] T7.3 - Intégrer navigation dans toutes les pages
+- [x] T7.4 - Migrer filtres Recherche Leads dans la page
+- [x] T7.5 - Nettoyer les autres pages
 
 ### Phase 8 : CSV Import (Module 008) 🔲 Todo
 > Import manuel de fichiers CSV avec mapping colonnes
@@ -137,7 +137,7 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 004 - GetSales Sync | ~9 jours | ✅ |
 | 005 - Leads Hub | ~14h | ✅ (via 006) |
 | 006 - Unified Data Model | ~16h | ✅ |
-| 007 - Top Navigation | ~7h | 🔲 |
+| 007 - Top Navigation | ~7h | ✅ |
 | 008 - CSV Import | ~8h | 🔲 |
 
 ---

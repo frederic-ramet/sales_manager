@@ -14,11 +14,18 @@ load_dotenv()
 st.set_page_config(
     page_title="Sales Ops - Genie Factory",
     page_icon="🏭",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
+
+# Navigation top bar
+from components import render_top_nav, hide_sidebar
+hide_sidebar()
 
 st.title("🏭 Sales Ops Portal")
 st.markdown("**Genie Factory** - Outils de gestion commerciale")
+
+render_top_nav(current_page="app.py")
 
 st.divider()
 

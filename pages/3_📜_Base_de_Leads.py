@@ -7,9 +7,15 @@ import pandas as pd
 from datetime import datetime
 
 from modules.lead_scraper import ContactManager, HubSpotClient, PappersClient
+from components import render_top_nav, hide_sidebar
+
+# Navigation
+hide_sidebar()
 
 st.title("📜 Base de Leads")
 st.markdown("Hub central de tous vos leads (SIRENE, HubSpot, GetSales)")
+
+render_top_nav(current_page="pages/3_📜_Base_de_Leads.py")
 
 # Charger la documentation
 def load_documentation():

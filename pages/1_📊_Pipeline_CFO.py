@@ -12,6 +12,7 @@ import logging
 from core.asana_client import AsanaClient, AsanaClientError
 from core.sheets_sync import GoogleSheetsSync, SheetsSyncError
 from core.scheduler import SyncScheduler
+from components import render_top_nav, hide_sidebar
 
 # Configuration logging
 logging.basicConfig(level=logging.INFO)
@@ -20,8 +21,13 @@ logger = logging.getLogger(__name__)
 # Charger les variables d'environnement
 load_dotenv()
 
+# Navigation
+hide_sidebar()
+
 st.title("📊 Dashboard Pipeline CFO")
 st.markdown("Synchronisation Asana → Google Sheets pour le pilotage financier")
+
+render_top_nav(current_page="pages/1_📊_Pipeline_CFO.py")
 
 # Onglets principal et documentation
 tab_main, tab_doc = st.tabs(["🔧 Application", "📖 Documentation"])
