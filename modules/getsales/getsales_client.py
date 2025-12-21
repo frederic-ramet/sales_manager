@@ -207,8 +207,18 @@ class GetSalesClient:
             # L'API peut retourner {data: [...]} ou directement [...]
             leads = data.get("data", data) if isinstance(data, dict) else data
 
-            logger.info(f"{len(leads)} leads récupérés")
-            return leads
+            # Extraire les données du lead de la structure imbriquée
+            # L'API retourne {lead: {...}, markers: [], flows: [], custom_fields: {}}
+            # On veut juste le contenu de 'lead'
+            extracted_leads = []
+            for item in leads:
+                if isinstance(item, dict) and 'lead' in item:
+                    extracted_leads.append(item['lead'])
+                else:
+                    extracted_leads.append(item)
+
+            logger.info(f"{len(extracted_leads)} leads récupérés")
+            return extracted_leads
 
         except Exception as e:
             logger.error(f"Erreur fetch leads: {e}")
@@ -251,10 +261,18 @@ class GetSalesClient:
                 if not leads:
                     break
 
-                all_leads.extend(leads)
-                logger.info(f"Page {page}: {len(leads)} leads (total: {len(all_leads)})")
+                # Extraire les données du lead de la structure imbriquée
+                extracted_leads = []
+                for item in leads:
+                    if isinstance(item, dict) and 'lead' in item:
+                        extracted_leads.append(item['lead'])
+                    else:
+                        extracted_leads.append(item)
 
-                if len(leads) < page_size:
+                all_leads.extend(extracted_leads)
+                logger.info(f"Page {page}: {len(extracted_leads)} leads (total: {len(all_leads)})")
+
+                if len(extracted_leads) < page_size:
                     break
 
                 page += 1
