@@ -695,18 +695,47 @@ class HubSpotClient:
         """
         Mappe les propriétés du contact vers les propriétés HubSpot.
 
+        Accepte:
+        - Noms internes legacy (denomination, telephone, dirigeant_nom...)
+        - Noms HubSpot directs (company, phone, firstname...)
+        - Noms unified_contacts (company_name, job_title...)
+
         Args:
-            contact: Contact avec propriétés internes
+            contact: Contact avec propriétés
 
         Returns:
             Dict de propriétés HubSpot
         """
         properties = {}
 
-        for internal_prop, hubspot_prop in self.PROPERTY_MAPPING.items():
-            value = contact.get(internal_prop)
-            if value is not None and str(value).strip():
-                properties[hubspot_prop] = str(value)
+        # Mapping étendu: plusieurs noms possibles pour chaque propriété HubSpot
+        EXTENDED_MAPPING = {
+            'email': ['email'],
+            'firstname': ['firstname', 'dirigeant_prenom', 'first_name'],
+            'lastname': ['lastname', 'dirigeant_nom', 'last_name'],
+            'phone': ['phone', 'telephone', 'tel'],
+            'mobilephone': ['mobilephone', 'mobile'],
+            'company': ['company', 'denomination', 'company_name'],
+            'jobtitle': ['jobtitle', 'dirigeant_fonction', 'job_title', 'fonction'],
+            'website': ['website', 'site_web'],
+            'address': ['address', 'adresse'],
+            'city': ['city', 'ville'],
+            'zip': ['zip', 'code_postal', 'postal_code'],
+            'country': ['country', 'pays'],
+            'siren': ['siren'],
+            'siret': ['siret'],
+            'code_ape': ['code_ape', 'ape_code'],
+            'effectif': ['effectif', 'employee_range'],
+            'chiffre_affaires': ['chiffre_affaires', 'revenue_range'],
+            'linkedin_url': ['linkedin_url', 'linkedin'],
+        }
+
+        for hubspot_prop, possible_names in EXTENDED_MAPPING.items():
+            for name in possible_names:
+                value = contact.get(name)
+                if value is not None and str(value).strip():
+                    properties[hubspot_prop] = str(value)
+                    break  # Prendre la première valeur trouvée
 
         return properties
 
