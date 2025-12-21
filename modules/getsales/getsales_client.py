@@ -176,6 +176,27 @@ class GetSalesClient:
             logger.error(f"Erreur fetch flows: {e}")
             raise
 
+    def get_flow_name(self, flow_uuid: str) -> Optional[str]:
+        """
+        Récupère le nom d'un flow par son UUID.
+
+        Args:
+            flow_uuid: UUID du flow
+
+        Returns:
+            Nom du flow ou None si non trouvé
+        """
+        try:
+            flows = self.fetch_flows()
+            for flow in flows:
+                if isinstance(flow, dict):
+                    if flow.get('uuid') == flow_uuid or flow.get('id') == flow_uuid:
+                        return flow.get('name') or flow.get('title')
+            return None
+        except Exception as e:
+            logger.warning(f"Erreur récupération nom flow {flow_uuid}: {e}")
+            return None
+
     def fetch_leads(
         self,
         filters: Optional[Dict[str, Any]] = None,

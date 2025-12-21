@@ -351,13 +351,18 @@ class GetSalesSyncService:
 
         # Chercher aussi dans 'flows' si présent (structure GetSales)
         flows = getsales_data.get('flows', [])
+        logger.info(f"Flows trouvés: {flows}")
         if flows and isinstance(flows, list) and len(flows) > 0:
             first_flow = flows[0]
+            logger.info(f"Premier flow: {first_flow}")
             if isinstance(first_flow, dict):
-                if not stats['flow_name'] and first_flow.get('name'):
-                    stats['flow_name'] = first_flow['name']
-                if not stats['flow_uuid'] and first_flow.get('uuid'):
-                    stats['flow_uuid'] = first_flow['uuid']
+                # Essayer différents noms de champs possibles
+                flow_name = first_flow.get('name') or first_flow.get('flow_name') or first_flow.get('title')
+                flow_uuid = first_flow.get('uuid') or first_flow.get('flow_uuid') or first_flow.get('id')
+                if not stats['flow_name'] and flow_name:
+                    stats['flow_name'] = flow_name
+                if not stats['flow_uuid'] and flow_uuid:
+                    stats['flow_uuid'] = flow_uuid
 
         if not messages:
             return stats
@@ -397,6 +402,14 @@ class GetSalesSyncService:
             m.get('type') in ('inbox', 'in', 'received') or m.get('direction') == 'in'
             for m in messages
         )
+
+        # Si on a un flow_uuid mais pas de flow_name, récupérer le nom via l'API
+        if stats['flow_uuid'] and not stats['flow_name'] and self.getsales:
+            logger.info(f"Récupération nom flow pour UUID: {stats['flow_uuid']}")
+            flow_name = self.getsales.get_flow_name(stats['flow_uuid'])
+            if flow_name:
+                stats['flow_name'] = flow_name
+                logger.info(f"Nom flow récupéré: {flow_name}")
 
         logger.info(f"Stats campagne extraites: flow={stats['flow_name']}, first_contact={stats['first_contact_date']}, messages={stats['interaction_count']}")
 
