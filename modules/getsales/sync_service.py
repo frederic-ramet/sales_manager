@@ -356,52 +356,60 @@ class GetSalesSyncService:
             first_flow = flows[0]
             logger.info(f"Premier flow: {first_flow}")
             if isinstance(first_flow, dict):
-                # Essayer différents noms de champs possibles
+                # Structure GetSales: flow_uuid est l'UUID de la campagne, uuid est l'ID de l'association
+                # Priorité: flow_uuid > uuid
+                flow_uuid = first_flow.get('flow_uuid') or first_flow.get('uuid') or first_flow.get('id')
                 flow_name = first_flow.get('name') or first_flow.get('flow_name') or first_flow.get('title')
-                flow_uuid = first_flow.get('uuid') or first_flow.get('flow_uuid') or first_flow.get('id')
-                if not stats['flow_name'] and flow_name:
-                    stats['flow_name'] = flow_name
+
                 if not stats['flow_uuid'] and flow_uuid:
                     stats['flow_uuid'] = flow_uuid
+                if not stats['flow_name'] and flow_name:
+                    stats['flow_name'] = flow_name
 
-        if not messages:
-            return stats
+                # Utiliser created_at du flow comme date de premier contact si pas de messages
+                if not stats['first_contact_date'] and first_flow.get('created_at'):
+                    created_at = first_flow['created_at']
+                    # Format: 2025-11-17T17:02:55.000000Z
+                    stats['first_contact_date'] = created_at[:10]
+                    logger.info(f"Date premier contact depuis flow: {stats['first_contact_date']}")
 
-        # Trier les messages par date
-        sorted_messages = sorted(
-            messages,
-            key=lambda m: m.get('sent_at', '') or m.get('created_at', '') or ''
-        )
+        # Traiter les messages si présents
+        if messages:
+            # Trier les messages par date
+            sorted_messages = sorted(
+                messages,
+                key=lambda m: m.get('sent_at', '') or m.get('created_at', '') or ''
+            )
 
-        # Extraire le flow_name du premier message sortant (si pas déjà trouvé)
-        for msg in sorted_messages:
-            if msg.get('flow_name') and not stats['flow_name']:
-                stats['flow_name'] = msg['flow_name']
-            if msg.get('flow_uuid') and not stats['flow_uuid']:
-                stats['flow_uuid'] = msg['flow_uuid']
-            if stats['flow_name'] and stats['flow_uuid']:
-                break
+            # Extraire le flow_name du premier message sortant (si pas déjà trouvé)
+            for msg in sorted_messages:
+                if msg.get('flow_name') and not stats['flow_name']:
+                    stats['flow_name'] = msg['flow_name']
+                if msg.get('flow_uuid') and not stats['flow_uuid']:
+                    stats['flow_uuid'] = msg['flow_uuid']
+                if stats['flow_name'] and stats['flow_uuid']:
+                    break
 
-        # Premier contact = premier message sortant
-        for msg in sorted_messages:
-            msg_type = msg.get('type') or msg.get('direction', '')
-            sent_at = msg.get('sent_at') or msg.get('created_at', '')
-            if msg_type in ('outbox', 'out', 'sent') and sent_at:
-                stats['first_contact_date'] = sent_at[:10]  # YYYY-MM-DD
-                break
+            # Premier contact = premier message sortant (écrase la date du flow si messages présents)
+            for msg in sorted_messages:
+                msg_type = msg.get('type') or msg.get('direction', '')
+                sent_at = msg.get('sent_at') or msg.get('created_at', '')
+                if msg_type in ('outbox', 'out', 'sent') and sent_at:
+                    stats['first_contact_date'] = sent_at[:10]  # YYYY-MM-DD
+                    break
 
-        # Dernière interaction = dernier message (tous types)
-        for msg in reversed(sorted_messages):
-            sent_at = msg.get('sent_at') or msg.get('created_at', '')
-            if sent_at:
-                stats['last_interaction_date'] = sent_at[:10]  # YYYY-MM-DD
-                break
+            # Dernière interaction = dernier message (tous types)
+            for msg in reversed(sorted_messages):
+                sent_at = msg.get('sent_at') or msg.get('created_at', '')
+                if sent_at:
+                    stats['last_interaction_date'] = sent_at[:10]  # YYYY-MM-DD
+                    break
 
-        # A répondu = au moins un message inbox
-        stats['has_replied'] = any(
-            m.get('type') in ('inbox', 'in', 'received') or m.get('direction') == 'in'
-            for m in messages
-        )
+            # A répondu = au moins un message inbox
+            stats['has_replied'] = any(
+                m.get('type') in ('inbox', 'in', 'received') or m.get('direction') == 'in'
+                for m in messages
+            )
 
         # Si on a un flow_uuid mais pas de flow_name, récupérer le nom via l'API
         if stats['flow_uuid'] and not stats['flow_name'] and self.getsales:
