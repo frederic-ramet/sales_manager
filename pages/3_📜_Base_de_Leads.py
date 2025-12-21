@@ -811,10 +811,9 @@ with tab3:
                     has_required = any(r in mapping for r in required)
                     st.metric("Prêt", "✅ Oui" if has_required else "❌ Non")
 
-                # Colonnes non mappées
+                # Colonnes non mappées - affichage direct
                 if unmapped:
-                    with st.expander(f"Colonnes ignorées ({len(unmapped)})"):
-                        st.write(", ".join(unmapped))
+                    st.info(f"📋 **Colonnes ignorées:** {', '.join(unmapped)}")
             else:
                 st.warning("⚠️ Aucune colonne mappée. Configurez le mapping ci-dessus.")
 

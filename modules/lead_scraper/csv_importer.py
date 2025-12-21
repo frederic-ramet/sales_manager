@@ -350,8 +350,19 @@ class CSVImporter:
                 contact_data['email'] = contact_data['email'].lower().strip()
 
             # Nettoyer le téléphone (garder uniquement chiffres et +)
+            # Gère les numéros multiples séparés par ; (prend le premier)
             if contact_data.get('phone'):
-                phone = contact_data['phone']
+                phone = str(contact_data['phone'])
+                # Gérer les numéros multiples séparés par ;
+                if ';' in phone:
+                    phones = [p.strip() for p in phone.split(';') if p.strip()]
+                    phone = phones[0] if phones else ''
+                    # Stocker les numéros supplémentaires dans notes
+                    if len(phones) > 1:
+                        extra_phones = '; '.join(phones[1:])
+                        notes = contact_data.get('notes', '') or ''
+                        contact_data['notes'] = f"{notes}\nTél. supplémentaires: {extra_phones}".strip()
+                # Nettoyer (garder uniquement chiffres, + et espaces)
                 phone = ''.join(c for c in phone if c.isdigit() or c == '+' or c == ' ')
                 contact_data['phone'] = phone.strip()
 
