@@ -307,7 +307,7 @@ class GetSalesSyncService:
         if linkedin:
             linkedin_url = self.dedup._format_linkedin_url(linkedin)
             if linkedin_url:
-                contact_data['linkedin_url'] = linkedin_url
+                contact_data['hs_linkedin_url'] = linkedin_url
 
         # Ajouter propriétés custom GetSales
         contact_data['getsales_uuid'] = getsales_data.get('uuid', '')

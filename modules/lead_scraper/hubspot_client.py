@@ -60,13 +60,13 @@ class HubSpotClient:
     STANDARD_PROPERTIES = [
         "firstname", "lastname", "email", "phone", "company",
         "jobtitle", "city", "address", "zip", "hs_object_id", "createdate",
-        "website", "mobilephone", "country"
+        "website", "mobilephone", "country", "hs_linkedin_url"
     ]
 
     # Propriétés personnalisées (peuvent ne pas exister - seront créées automatiquement)
     CUSTOM_PROPERTIES = [
         "siren", "siret", "code_ape", "effectif", "chiffre_affaires",
-        "linkedin_url", "import_source", "import_notes", "getsales_uuid",
+        "import_source", "import_notes", "getsales_uuid",
         "getsales_headline", "getsales_bio"
     ]
 
@@ -112,14 +112,6 @@ class HubSpotClient:
             "groupName": "contactinformation",
             "description": "Chiffre d'affaires de l'entreprise"
         },
-        "linkedin_url": {
-            "name": "linkedin_url",
-            "label": "LinkedIn URL",
-            "type": "string",
-            "fieldType": "text",
-            "groupName": "contactinformation",
-            "description": "URL du profil LinkedIn"
-        },
         "import_source": {
             "name": "import_source",
             "label": "Source d'import",
@@ -150,7 +142,11 @@ class HubSpotClient:
             "type": "string",
             "fieldType": "text",
             "groupName": "contactinformation",
+<<<<<<< HEAD
             "description": "Titre LinkedIn du contact (via GetSales)"
+=======
+            "description": "Titre/poste du contact depuis GetSales"
+>>>>>>> a6ef17c (fix: add missing GetSales custom properties and use hs_linkedin_url)
         },
         "getsales_bio": {
             "name": "getsales_bio",
@@ -158,7 +154,11 @@ class HubSpotClient:
             "type": "string",
             "fieldType": "textarea",
             "groupName": "contactinformation",
+<<<<<<< HEAD
             "description": "Description LinkedIn du contact (via GetSales)"
+=======
+            "description": "Biographie du contact depuis GetSales"
+>>>>>>> a6ef17c (fix: add missing GetSales custom properties and use hs_linkedin_url)
         },
     }
 
@@ -789,6 +789,9 @@ class HubSpotClient:
         created = 0
         errors = []
 
+        # Propriétés à exclure (celles qui ont échoué)
+        failed_props = set(properties_result.get("failed", []))
+
         for i in range(0, len(contacts), self.BATCH_SIZE):
             batch = contacts[i:i + self.BATCH_SIZE]
 
@@ -796,6 +799,14 @@ class HubSpotClient:
                 inputs = []
                 for contact in batch:
                     properties = self._map_properties(contact)
+
+                    # Filtrer les propriétés qui ont échoué
+                    if failed_props:
+                        properties = {
+                            k: v for k, v in properties.items()
+                            if k not in failed_props
+                        }
+
                     inputs.append({"properties": properties})
 
                 self._handle_rate_limit()
