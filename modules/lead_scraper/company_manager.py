@@ -398,6 +398,7 @@ class CompanyManager:
         source: str = None,
         status: str = 'active',
         has_contacts: bool = None,
+        synced_hubspot: bool = None,
         city: str = None,
         ape_codes: List[str] = None,
         limit: int = 100,
@@ -411,6 +412,7 @@ class CompanyManager:
             source: Filtrer par source
             status: Statut (active, archived)
             has_contacts: Filtrer par présence de contacts
+            synced_hubspot: Filtrer par statut sync HubSpot
             city: Filtrer par ville
             ape_codes: Liste de codes APE
             limit: Nombre max de résultats
@@ -451,6 +453,12 @@ class CompanyManager:
                 conditions.append("total_contacts > 0")
             else:
                 conditions.append("total_contacts = 0")
+
+        if synced_hubspot is not None:
+            if synced_hubspot:
+                conditions.append("synced_to_hubspot = 1")
+            else:
+                conditions.append("synced_to_hubspot = 0")
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

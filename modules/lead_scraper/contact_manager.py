@@ -433,18 +433,19 @@ class ContactManager:
             params.append(status)
 
         if source:
-            conditions.append("source = ?")
+            conditions.append("contact_source = ?")
             params.append(source.lower())
 
         if campaign_id:
             conditions.append("campaign_id = ?")
             params.append(campaign_id)
 
-        if enriched is not None:
-            if enriched:
-                conditions.append("enriched_at IS NOT NULL")
-            else:
-                conditions.append("enriched_at IS NULL")
+        # DISABLED: enriched_at is now a company-level field, not contact-level
+        # if enriched is not None:
+        #     if enriched:
+        #         conditions.append("enriched_at IS NOT NULL")
+        #     else:
+        #         conditions.append("enriched_at IS NULL")
 
         if synced is not None:
             if synced:
@@ -545,13 +546,6 @@ class ContactManager:
             """)
             by_source = {row[0]: row[1] for row in cursor.fetchall()}
 
-            # Enrichis
-            cursor.execute("""
-                SELECT COUNT(*) FROM unified_contacts
-                WHERE contact_status = 'active' AND enriched_at IS NOT NULL
-            """)
-            enriched_count = cursor.fetchone()[0]
-
             # Synced HubSpot
             cursor.execute("""
                 SELECT COUNT(*) FROM unified_contacts
@@ -589,7 +583,6 @@ class ContactManager:
             return {
                 'total_contacts': total,
                 'by_source': by_source,
-                'enriched_count': enriched_count,
                 'hubspot_synced': hubspot_synced,
                 'num_campaigns': num_campaigns,
                 'last_contact': last_contact,
@@ -645,9 +638,9 @@ class ContactManager:
 
             # Sources
             cursor.execute("""
-                SELECT DISTINCT source FROM unified_contacts
+                SELECT DISTINCT contact_source FROM unified_contacts
                 WHERE contact_status = 'active' AND contact_source IS NOT NULL
-                ORDER BY source
+                ORDER BY contact_source
             """)
             sources = [row[0] for row in cursor.fetchall()]
 
@@ -995,6 +988,7 @@ class ContactManager:
     def mark_enriched(self, contact_uuid: str, source: str = 'pappers') -> bool:
         """
         Marque un contact comme enrichi.
+        Note: Enrichment is now a company-level property.
 
         Args:
             contact_uuid: UUID du contact
@@ -1005,11 +999,23 @@ class ContactManager:
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
+
+            # Get the contact's company_id
+            cursor.execute("SELECT company_id FROM contacts WHERE uuid = ?", (contact_uuid,))
+            row = cursor.fetchone()
+
+            if not row or not row[0]:
+                # No company associated, can't mark as enriched
+                return False
+
+            company_id = row[0]
+
+            # Update the company record
             cursor.execute("""
-                UPDATE unified_contacts
+                UPDATE companies
                 SET enriched_at = ?, enrichment_source = ?, updated_at = ?
-                WHERE uuid = ?
-            """, (datetime.now(), source, datetime.now(), contact_uuid))
+                WHERE id = ?
+            """, (datetime.now(), source, datetime.now(), company_id))
             conn.commit()
             return cursor.rowcount > 0
 
@@ -1068,9 +1074,8 @@ class ContactManager:
             cursor.execute("""
                 SELECT * FROM unified_contacts
                 WHERE contact_status = 'active'
-                  AND enriched_at IS NOT NULL
                   AND synced_to_hubspot = 0
-                ORDER BY enriched_at DESC
+                ORDER BY created_at DESC
                 LIMIT ?
             """, (limit,))
             rows = cursor.fetchall()
