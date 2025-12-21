@@ -66,7 +66,8 @@ class HubSpotClient:
     # Propriétés personnalisées (peuvent ne pas exister - seront créées automatiquement)
     CUSTOM_PROPERTIES = [
         "siren", "siret", "code_ape", "effectif", "chiffre_affaires",
-        "linkedin_url", "import_source", "import_notes", "getsales_uuid"
+        "linkedin_url", "import_source", "import_notes", "getsales_uuid",
+        "getsales_headline", "getsales_bio"
     ]
 
     # Définitions des propriétés custom à créer
@@ -142,6 +143,22 @@ class HubSpotClient:
             "fieldType": "text",
             "groupName": "contactinformation",
             "description": "Identifiant GetSales du contact"
+        },
+        "getsales_headline": {
+            "name": "getsales_headline",
+            "label": "GetSales Headline",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Titre LinkedIn du contact (via GetSales)"
+        },
+        "getsales_bio": {
+            "name": "getsales_bio",
+            "label": "GetSales Bio",
+            "type": "string",
+            "fieldType": "textarea",
+            "groupName": "contactinformation",
+            "description": "Description LinkedIn du contact (via GetSales)"
         },
     }
 
@@ -846,6 +863,11 @@ class HubSpotClient:
             'effectif': ['effectif', 'employee_range'],
             'chiffre_affaires': ['chiffre_affaires', 'revenue_range'],
             'linkedin_url': ['linkedin_url', 'linkedin'],
+            'import_source': ['import_source'],
+            'import_notes': ['import_notes', 'notes'],
+            'getsales_uuid': ['getsales_uuid'],
+            'getsales_headline': ['getsales_headline', 'headline'],
+            'getsales_bio': ['getsales_bio', 'about', 'bio'],
         }
 
         for hubspot_prop, possible_names in EXTENDED_MAPPING.items():
