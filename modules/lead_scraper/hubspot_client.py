@@ -718,6 +718,32 @@ class HubSpotClient:
 
         return {"updated": updated, "errors": errors}
 
+    def delete_contact(self, contact_id: str) -> bool:
+        """
+        Supprime un contact de HubSpot.
+
+        Args:
+            contact_id: ID du contact HubSpot
+
+        Returns:
+            True si supprimé, False sinon
+        """
+        try:
+            self._handle_rate_limit()
+            response = self.client.delete(f"/crm/v3/objects/contacts/{contact_id}")
+            response.raise_for_status()
+            logger.info(f"Contact {contact_id} supprimé de HubSpot")
+            return True
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.warning(f"Contact {contact_id} non trouvé dans HubSpot")
+            else:
+                logger.error(f"Erreur suppression contact {contact_id}: HTTP {e.response.status_code}")
+            return False
+        except Exception as e:
+            logger.error(f"Erreur suppression contact {contact_id}: {e}")
+            return False
+
     def push_contacts(self, contacts: List[Dict[str, Any]], auto_create_properties: bool = True) -> Dict[str, Any]:
         """
         Envoie des contacts vers HubSpot (création batch).

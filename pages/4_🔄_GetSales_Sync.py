@@ -572,7 +572,25 @@ with tab_main:
 
                 # Info si déjà traité
                 if lead.validation_status != 'pending':
-                    st.caption(f"Traité le {lead.validated_at or 'N/A'}")
+                    st.divider()
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        status_text = "✅ Validé" if lead.validation_status == 'approved' else "❌ Rejeté"
+                        st.caption(f"{status_text} le {lead.validated_at or 'N/A'}")
+
+                    with col2:
+                        if st.button("↩️ Invalider", key=f"invalidate_{lead.id}", use_container_width=True, help="Repasser en statut 'en attente'"):
+                            try:
+                                db.update_lead_status(
+                                    lead_id=lead.id,
+                                    status='pending',
+                                    rejection_reason=None
+                                )
+                                st.success("✅ Lead remis en attente")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur: {e}")
 
     st.divider()
 
