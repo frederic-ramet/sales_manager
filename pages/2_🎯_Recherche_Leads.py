@@ -20,8 +20,8 @@ from modules.lead_scraper import (
     Exporter,
     QueryParser,
     ContactManager,
-    HubSpotClient,
-    ProspectClassifier
+    HubSpotClient
+    # ProspectClassifier  # TODO: Not implemented yet
 )
 from config.campaigns import CAMPAIGN_PRESETS, SEGMENTS, list_presets
 
@@ -453,18 +453,18 @@ with tab_main:
                 status_text.text("Aucun résultat")
                 progress_bar.progress(100)
             else:
-                # Classification ICP (A/B/C)
-                progress_bar.progress(30)
-                status_text.text("📊 Classification ICP...")
-                update_log("📊 Classification des prospects (A/B/C)...")
-
-                classifier = ProspectClassifier()
-                companies = classifier.classify_batch(companies)
-
-                # Stats de classification
-                stats = classifier.get_classification_stats(companies)
-                update_log(f"   🟢 A: {stats['by_class']['A']} | 🟡 B: {stats['by_class']['B']} | ⚪ C: {stats['by_class']['C']}")
-                update_log(f"   📈 Contacts attendus: ~{stats['expected_contacts']['total']}")
+                # Classification ICP (A/B/C) - TODO: Not implemented yet
+                # progress_bar.progress(30)
+                # status_text.text("📊 Classification ICP...")
+                # update_log("📊 Classification des prospects (A/B/C)...")
+                #
+                # classifier = ProspectClassifier()
+                # companies = classifier.classify_batch(companies)
+                #
+                # # Stats de classification
+                # stats = classifier.get_classification_stats(companies)
+                # update_log(f"   🟢 A: {stats['by_class']['A']} | 🟡 B: {stats['by_class']['B']} | ⚪ C: {stats['by_class']['C']}")
+                # update_log(f"   📈 Contacts attendus: ~{stats['expected_contacts']['total']}")
 
                 # Déduplication SQLite - séparer nouvelles vs existantes
                 if enable_deduplication and COMPANY_SCHEMA_AVAILABLE:

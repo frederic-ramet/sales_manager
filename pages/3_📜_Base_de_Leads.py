@@ -1039,21 +1039,21 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
     with tab_entreprises:
         st.subheader("🏢 Liste des entreprises")
 
-        # Stats de classification
-        class_stats = company_manager.get_classification_stats()
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            st.metric("🟢 Classe A", class_stats.get('by_class', {}).get('A', 0))
-        with col2:
-            st.metric("🟡 Classe B", class_stats.get('by_class', {}).get('B', 0))
-        with col3:
-            st.metric("⚪ Classe C", class_stats.get('by_class', {}).get('C', 0))
-        with col4:
-            st.metric("❓ Non classifiées", class_stats.get('unclassified', 0))
-        with col5:
-            # Entreprises à enrichir
-            to_enrich = company_manager.get_companies_to_enrich(limit=1000)
-            st.metric("💎 À enrichir", len(to_enrich))
+        # Stats de classification - TODO: Not implemented yet (prospect_class column doesn't exist)
+        # class_stats = company_manager.get_classification_stats()
+        # col1, col2, col3, col4, col5 = st.columns(5)
+        # with col1:
+        #     st.metric("🟢 Classe A", class_stats.get('by_class', {}).get('A', 0))
+        # with col2:
+        #     st.metric("🟡 Classe B", class_stats.get('by_class', {}).get('B', 0))
+        # with col3:
+        #     st.metric("⚪ Classe C", class_stats.get('by_class', {}).get('C', 0))
+        # with col4:
+        #     st.metric("❓ Non classifiées", class_stats.get('unclassified', 0))
+        # with col5:
+        #     # Entreprises à enrichir
+        #     to_enrich = company_manager.get_companies_to_enrich(limit=1000)
+        #     st.metric("💎 À enrichir", len(to_enrich))
 
         st.divider()
 
