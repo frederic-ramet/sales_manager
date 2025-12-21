@@ -213,6 +213,22 @@ class HubSpotClient:
     # Toutes les propriétés (pour compatibilité)
     SYNC_PROPERTIES = STANDARD_PROPERTIES + CUSTOM_PROPERTIES
 
+    # Mapping propriétés Company local → HubSpot (Phase 5)
+    COMPANY_FIELD_MAPPING = {
+        'company_name': 'name',
+        'website': 'domain',
+        'employee_range': 'numberofemployees',
+        'revenue_range': 'annualrevenue',
+        'address': 'address',
+        'city': 'city',
+        'postal_code': 'zip',
+        'country': 'country',
+        'siren': 'siren',           # custom property
+        'siret_list': 'siret_list', # custom property
+        'ape_code': 'code_ape',     # custom property
+        'ape_label': 'ape_label',   # custom property
+    }
+
     def __init__(self, api_key: Optional[str] = None, mirror_path: Optional[str] = None):
         """
         Initialise le client HubSpot.
@@ -1127,6 +1143,87 @@ class HubSpotClient:
             }
 
         return None
+
+    def sync_companies_batch(
+        self,
+        companies: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Synchronise un batch de companies vers HubSpot.
+
+        Pour chaque company:
+        1. Cherche si elle existe déjà (par SIREN ou domain)
+        2. Crée si non existante
+        3. Retourne le mapping local_id → hubspot_id
+
+        Args:
+            companies: Liste de dicts avec les propriétés company
+                Chaque company doit avoir au minimum:
+                - 'id' ou 'local_id': ID local
+                - 'company_name': Nom de l'entreprise
+
+        Returns:
+            {
+                'synced': int,
+                'created': int,
+                'existing': int,
+                'errors': int,
+                'mapping': {local_id: hubspot_id, ...}
+            }
+        """
+        result = {
+            'synced': 0,
+            'created': 0,
+            'existing': 0,
+            'errors': 0,
+            'mapping': {}
+        }
+
+        for company in companies:
+            local_id = company.get('id') or company.get('local_id')
+            company_name = company.get('company_name')
+
+            if not company_name:
+                result['errors'] += 1
+                continue
+
+            try:
+                # Mapper les propriétés
+                hs_props = {}
+                for local_key, hs_key in self.COMPANY_FIELD_MAPPING.items():
+                    if company.get(local_key):
+                        hs_props[hs_key] = company[local_key]
+
+                # Chercher ou créer
+                hubspot_result = self.get_or_create_company(
+                    name=company_name,
+                    domain=company.get('website'),
+                    siren=company.get('siren'),
+                    additional_properties=hs_props
+                )
+
+                if hubspot_result:
+                    result['synced'] += 1
+                    result['mapping'][local_id] = hubspot_result['id']
+
+                    if hubspot_result.get('created'):
+                        result['created'] += 1
+                    else:
+                        result['existing'] += 1
+                else:
+                    result['errors'] += 1
+
+            except Exception as e:
+                logger.error(f"Erreur sync company {company_name}: {e}")
+                result['errors'] += 1
+
+        logger.info(
+            f"Sync companies batch: {result['synced']} sync "
+            f"({result['created']} créées, {result['existing']} existantes, "
+            f"{result['errors']} erreurs)"
+        )
+
+        return result
 
     def create_contact(
         self,
