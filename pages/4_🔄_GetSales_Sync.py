@@ -337,6 +337,50 @@ with tab_main:
                         else:
                             st.write("Aucune interaction")
 
+                        # Afficher les infos du flow si disponibles
+                        flows = lead_data.get('flows', [])
+                        if flows:
+                            first_flow = flows[0] if flows else {}
+                            flow_name = first_flow.get('name') or first_flow.get('flow_name', '')
+                            created_at = first_flow.get('created_at', '')[:10] if first_flow.get('created_at') else ''
+                            if created_at:
+                                st.write(f"📅 Premier contact: {created_at}")
+
+                # === Section Debug ===
+                with st.expander("🔍 Debug - Données brutes", expanded=False):
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Données GetSales**")
+                        st.write(f"UUID: `{lead_data.get('uuid', 'N/A')}`")
+                        st.write(f"LinkedIn: `{lead_data.get('linkedin', 'N/A')}`")
+
+                        flows = lead_data.get('flows', [])
+                        if flows:
+                            st.write("**Flows:**")
+                            for i, flow in enumerate(flows[:3]):  # Max 3 flows
+                                st.write(f"  - flow_uuid: `{flow.get('flow_uuid', 'N/A')}`")
+                                st.write(f"  - created_at: `{flow.get('created_at', 'N/A')}`")
+                                st.write(f"  - status: `{flow.get('status', 'N/A')}`")
+                        else:
+                            st.write("Flows: Aucun")
+
+                    with col2:
+                        st.markdown("**Propriétés HubSpot (preview)**")
+                        # Simuler ce qui sera envoyé
+                        linkedin = lead_data.get('linkedin', '')
+                        if linkedin and not linkedin.startswith('http'):
+                            linkedin_url = f"https://linkedin.com/in/{linkedin}"
+                        else:
+                            linkedin_url = linkedin
+
+                        st.write(f"hs_linkedin_url: `{linkedin_url or 'N/A'}`")
+                        st.write(f"hs_analytics_source: `OTHER_CAMPAIGNS`")
+                        st.write(f"hs_analytics_source_data_1: `GetSales_interne`")
+                        st.write(f"hs_analytics_source_data_2: `LinkedIn`")
+                        st.write(f"import_source: `GetSales_interne`")
+                        st.write(f"getsales_uuid: `{lead_data.get('uuid', 'N/A')}`")
+
                 # === Doublons locaux (Base de Leads) ===
                 if lead.local_matches:
                     st.divider()
