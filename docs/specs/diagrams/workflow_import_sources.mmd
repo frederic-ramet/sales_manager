@@ -1,0 +1,61 @@
+flowchart TD
+    Start([Sources de données])
+
+    Start --> SIRENE[Recherche SIRENE/Pappers]
+    Start --> GETSALES[Import GetSales]
+    Start --> HUBSPOT[Sync HubSpot]
+    Start --> MANUAL[Saisie manuelle]
+
+    %% SIRENE Flow
+    SIRENE --> S1{SIREN existe?}
+    S1 -->|Oui| S2[UPDATE companies]
+    S1 -->|Non| S3[INSERT companies]
+    S2 --> S4[Afficher entreprises]
+    S3 --> S4
+    S4 --> S5{User clique Enrichir?}
+    S5 -->|Oui| S6[API Pappers dirigeants]
+    S5 -->|Non| END1([Fin])
+    S6 --> S7[INSERT contacts avec company_id]
+    S7 --> END1
+
+    %% GetSales Flow
+    GETSALES --> G1[Pour chaque lead]
+    G1 --> G2{Match entreprise?<br/>domain/SIREN/nom}
+    G2 -->|Trouvée| G3[Récupérer company_id]
+    G2 -->|Pas trouvée| G4[INSERT companies<br/>siren=NULL]
+    G3 --> G5[INSERT contacts<br/>avec company_id]
+    G4 --> G5
+    G5 --> G6{Plus de leads?}
+    G6 -->|Oui| G1
+    G6 -->|Non| END2([Fin])
+
+    %% HubSpot Flow
+    HUBSPOT --> H1[Sync Companies]
+    H1 --> H2{hubspot_company_id<br/>existe?}
+    H2 -->|Oui| H3[UPDATE HubSpot Company]
+    H2 -->|Non| H4[CREATE HubSpot Company]
+    H3 --> H5[Stocker hubspot_company_id]
+    H4 --> H5
+    H5 --> H6[Sync Contacts]
+    H6 --> H7{company_id existe?}
+    H7 -->|Oui| H8[Associer contact<br/>à company HubSpot]
+    H7 -->|Non| H9[Contact sans company]
+    H8 --> H10[CREATE/UPDATE<br/>HubSpot Contact]
+    H9 --> H10
+    H10 --> END3([Fin])
+
+    %% Manual Flow
+    MANUAL --> M1{Avec entreprise?}
+    M1 -->|Oui| M2{Entreprise existe?}
+    M1 -->|Non| M5[INSERT contacts<br/>company_id=NULL]
+    M2 -->|Oui| M3[Sélectionner company_id]
+    M2 -->|Non| M4[INSERT companies]
+    M3 --> M6[INSERT contacts<br/>avec company_id]
+    M4 --> M6
+    M5 --> END4([Fin])
+    M6 --> END4
+
+    style SIRENE fill:#e1f5ff
+    style GETSALES fill:#fff3e0
+    style HUBSPOT fill:#f3e5f5
+    style MANUAL fill:#e8f5e9

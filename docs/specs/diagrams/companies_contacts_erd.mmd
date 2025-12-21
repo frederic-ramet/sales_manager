@@ -1,0 +1,90 @@
+erDiagram
+    COMPANIES ||--o{ CONTACTS : "has"
+    COMPANIES {
+        int id PK
+        string uuid UK
+        string siren UK "NULL if foreign"
+        string siret_list "comma-separated"
+        string hubspot_company_id UK
+        string company_name
+        string legal_form
+        string ape_code
+        string ape_label
+        string address
+        string postal_code
+        string city
+        string region
+        string country
+        string employee_range
+        string revenue_range
+        string website
+        string company_phone
+        string company_email
+        timestamp enriched_at
+        string enrichment_source
+        string enrichment_quality
+        string prospection_status
+        string prospection_priority
+        int total_contacts
+        int total_messages_sent
+        int total_messages_received
+        timestamp last_contact_interaction_at
+        int synced_to_hubspot
+        timestamp last_sync_hubspot
+        string source "sirene|getsales|hubspot|csv|manual"
+        string campaign_id
+        timestamp created_at
+        timestamp updated_at
+        string status "active|archived|duplicate"
+        string notes
+        string tags
+        text raw_data
+    }
+
+    CONTACTS {
+        int id PK
+        string uuid UK
+        int company_id FK "NULL if no company"
+        string getsales_uuid UK
+        string hubspot_contact_id UK
+        string firstname
+        string lastname
+        string email UK
+        string phone
+        string mobile
+        string job_title
+        string department
+        string seniority
+        string linkedin_url UK
+        string linkedin_headline
+        string linkedin_bio
+        string prospection_status
+        int messages_sent
+        int messages_received
+        timestamp last_interaction_at
+        string getsales_campaign_id
+        string getsales_flow_id
+        int synced_to_hubspot
+        timestamp last_sync_hubspot
+        string source "sirene|getsales|hubspot|csv|manual"
+        string campaign_id
+        timestamp created_at
+        timestamp updated_at
+        string status "active|bounced|unsubscribed|archived"
+        string notes
+        string tags
+        text raw_data
+    }
+
+    COMPANIES ||--o{ COMPANY_CONTACTS_HISTORY : "tracks"
+    CONTACTS ||--o{ COMPANY_CONTACTS_HISTORY : "tracked in"
+
+    COMPANY_CONTACTS_HISTORY {
+        int id PK
+        int contact_id FK
+        int company_id FK
+        string job_title
+        timestamp started_at
+        timestamp ended_at
+        int is_current
+    }
