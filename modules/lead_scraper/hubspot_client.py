@@ -753,6 +753,304 @@ class HubSpotClient:
             logger.error(f"Erreur suppression contact {contact_id}: {e}")
             return False
 
+    # ==================== GESTION DES COMPANIES ====================
+
+    def search_company(
+        self,
+        name: Optional[str] = None,
+        domain: Optional[str] = None,
+        siren: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Recherche une company dans HubSpot par nom, domaine ou SIREN.
+
+        Args:
+            name: Nom de l'entreprise (recherche exacte puis fuzzy)
+            domain: Domaine web de l'entreprise
+            siren: Numéro SIREN
+
+        Returns:
+            Company trouvée avec id et properties, ou None
+        """
+        try:
+            filters = []
+
+            # Priorité 1: SIREN (exact match)
+            if siren:
+                filters.append({
+                    "propertyName": "siren",
+                    "operator": "EQ",
+                    "value": siren
+                })
+
+            # Priorité 2: Domain (exact match)
+            if domain and not filters:
+                # Nettoyer le domaine
+                clean_domain = domain.lower().replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
+                filters.append({
+                    "propertyName": "domain",
+                    "operator": "CONTAINS_TOKEN",
+                    "value": clean_domain
+                })
+
+            # Priorité 3: Nom (exact match)
+            if name and not filters:
+                filters.append({
+                    "propertyName": "name",
+                    "operator": "EQ",
+                    "value": name
+                })
+
+            if not filters:
+                return None
+
+            self._handle_rate_limit()
+            response = self.client.post(
+                "/crm/v3/objects/companies/search",
+                json={
+                    "filterGroups": [{"filters": filters}],
+                    "properties": ["name", "domain", "siren", "industry", "city", "numberofemployees"],
+                    "limit": 1
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            results = data.get("results", [])
+            if results:
+                company = results[0]
+                logger.info(f"Company trouvée: {company.get('properties', {}).get('name')} (ID: {company.get('id')})")
+                return {
+                    "id": company.get("id"),
+                    "properties": company.get("properties", {})
+                }
+
+            # Si pas trouvé par nom exact, essayer recherche partielle
+            if name and not siren and not domain:
+                self._handle_rate_limit()
+                response = self.client.post(
+                    "/crm/v3/objects/companies/search",
+                    json={
+                        "filterGroups": [{
+                            "filters": [{
+                                "propertyName": "name",
+                                "operator": "CONTAINS_TOKEN",
+                                "value": name.split()[0] if name else ""  # Premier mot
+                            }]
+                        }],
+                        "properties": ["name", "domain", "siren", "industry", "city"],
+                        "limit": 5
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                # Chercher le meilleur match
+                for company in data.get("results", []):
+                    company_name = company.get("properties", {}).get("name", "").lower()
+                    if name.lower() in company_name or company_name in name.lower():
+                        logger.info(f"Company trouvée (fuzzy): {company.get('properties', {}).get('name')}")
+                        return {
+                            "id": company.get("id"),
+                            "properties": company.get("properties", {})
+                        }
+
+            logger.debug(f"Aucune company trouvée pour: name={name}, domain={domain}, siren={siren}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Erreur recherche company: {e}")
+            return None
+
+    def create_company(self, properties: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Crée une nouvelle company dans HubSpot.
+
+        Args:
+            properties: Propriétés de la company (name, domain, siren, industry, city, etc.)
+
+        Returns:
+            Company créée avec id et properties, ou None
+        """
+        try:
+            # Mapper les propriétés
+            hs_properties = {}
+
+            property_mapping = {
+                'name': ['name', 'company_name', 'denomination'],
+                'domain': ['domain', 'website'],
+                'siren': ['siren'],
+                'industry': ['industry', 'secteur'],
+                'city': ['city', 'ville'],
+                'phone': ['phone', 'telephone'],
+                'address': ['address', 'adresse'],
+                'zip': ['zip', 'code_postal', 'postal_code'],
+                'country': ['country', 'pays'],
+                'numberofemployees': ['numberofemployees', 'effectif', 'employee_count'],
+                'annualrevenue': ['annualrevenue', 'chiffre_affaires', 'revenue'],
+            }
+
+            for hs_prop, possible_names in property_mapping.items():
+                for prop_name in possible_names:
+                    value = properties.get(prop_name)
+                    if value is not None and str(value).strip():
+                        hs_properties[hs_prop] = str(value)
+                        break
+
+            if not hs_properties.get('name'):
+                logger.warning("Impossible de créer une company sans nom")
+                return None
+
+            self._handle_rate_limit()
+            response = self.client.post(
+                "/crm/v3/objects/companies",
+                json={"properties": hs_properties}
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            logger.info(f"Company créée: {hs_properties.get('name')} (ID: {data.get('id')})")
+            return {
+                "id": data.get("id"),
+                "properties": data.get("properties", {})
+            }
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erreur création company: HTTP {e.response.status_code} - {e.response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Erreur création company: {e}")
+            return None
+
+    def associate_contact_company(self, contact_id: str, company_id: str) -> bool:
+        """
+        Associe un contact à une company dans HubSpot.
+
+        Args:
+            contact_id: ID du contact HubSpot
+            company_id: ID de la company HubSpot
+
+        Returns:
+            True si association réussie, False sinon
+        """
+        try:
+            self._handle_rate_limit()
+
+            # API v4 pour les associations
+            response = self.client.put(
+                f"/crm/v4/objects/contacts/{contact_id}/associations/companies/{company_id}",
+                json=[{
+                    "associationCategory": "HUBSPOT_DEFINED",
+                    "associationTypeId": 279  # Contact to Company (primary)
+                }]
+            )
+            response.raise_for_status()
+
+            logger.info(f"Contact {contact_id} associé à company {company_id}")
+            return True
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erreur association contact-company: HTTP {e.response.status_code} - {e.response.text}")
+            return False
+        except Exception as e:
+            logger.error(f"Erreur association contact-company: {e}")
+            return False
+
+    def get_or_create_company(
+        self,
+        name: str,
+        domain: Optional[str] = None,
+        siren: Optional[str] = None,
+        additional_properties: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Récupère une company existante ou en crée une nouvelle.
+
+        Args:
+            name: Nom de l'entreprise (requis)
+            domain: Domaine web (optionnel, utilisé pour la recherche)
+            siren: Numéro SIREN (optionnel, utilisé pour la recherche)
+            additional_properties: Propriétés additionnelles pour la création
+
+        Returns:
+            Company (existante ou créée) avec 'id', 'properties', 'created' (bool)
+        """
+        # 1. Chercher une company existante
+        existing = self.search_company(name=name, domain=domain, siren=siren)
+
+        if existing:
+            return {
+                "id": existing["id"],
+                "properties": existing["properties"],
+                "created": False
+            }
+
+        # 2. Créer une nouvelle company
+        create_props = {"name": name}
+        if domain:
+            create_props["domain"] = domain
+        if siren:
+            create_props["siren"] = siren
+        if additional_properties:
+            create_props.update(additional_properties)
+
+        created = self.create_company(create_props)
+
+        if created:
+            return {
+                "id": created["id"],
+                "properties": created["properties"],
+                "created": True
+            }
+
+        return None
+
+    def create_contact(
+        self,
+        properties: Dict[str, Any],
+        auto_create_properties: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Crée un seul contact dans HubSpot et retourne son ID.
+
+        Args:
+            properties: Propriétés du contact
+            auto_create_properties: Si True, crée les propriétés custom manquantes
+
+        Returns:
+            Dict avec 'id' et 'properties' du contact créé, ou None si erreur
+        """
+        try:
+            # S'assurer que les propriétés custom existent
+            if auto_create_properties:
+                self.ensure_custom_properties()
+
+            # Mapper les propriétés
+            hs_properties = self._map_properties(properties)
+
+            self._handle_rate_limit()
+            response = self.client.post(
+                "/crm/v3/objects/contacts",
+                json={"properties": hs_properties}
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            contact_id = data.get("id")
+            logger.info(f"Contact créé: ID {contact_id}")
+
+            return {
+                "id": contact_id,
+                "properties": data.get("properties", {})
+            }
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erreur création contact: HTTP {e.response.status_code} - {e.response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Erreur création contact: {e}")
+            return None
+
     def push_contacts(self, contacts: List[Dict[str, Any]], auto_create_properties: bool = True) -> Dict[str, Any]:
         """
         Envoie des contacts vers HubSpot (création batch).

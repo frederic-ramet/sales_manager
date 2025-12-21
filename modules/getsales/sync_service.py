@@ -286,13 +286,13 @@ class GetSalesSyncService:
 
     def _create_hubspot_contact(self, getsales_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Crée un nouveau contact dans HubSpot.
+        Crée un nouveau contact dans HubSpot avec association à une company.
 
         Args:
             getsales_data: Données du lead GetSales
 
         Returns:
-            Contact créé avec 'id'
+            Contact créé avec 'id' et 'company_id' (si associé)
         """
         # Mapper les champs
         contact_data = {}
@@ -318,16 +318,53 @@ class GetSalesSyncService:
         if getsales_data.get('about'):
             contact_data['getsales_bio'] = getsales_data['about'][:2000]
 
-        # Créer le contact
-        result = self.hubspot.push_contacts([contact_data])
+        # 1. Créer le contact (utiliser create_contact pour avoir l'ID)
+        contact_result = self.hubspot.create_contact(contact_data)
 
-        if result.get('created', 0) > 0:
-            logger.info(f"Contact HubSpot créé depuis GetSales")
-            # Retourner un ID fictif car push_contacts ne retourne pas l'ID
-            return {'id': f"new_{getsales_data.get('uuid', 'unknown')}"}
-        else:
-            errors = result.get('errors', [])
-            raise Exception(f"Échec création contact: {errors}")
+        if not contact_result:
+            raise Exception("Échec création contact HubSpot")
+
+        contact_id = contact_result['id']
+        logger.info(f"Contact HubSpot créé: ID {contact_id}")
+
+        result = {'id': contact_id, 'company_id': None}
+
+        # 2. Gérer la company (si nom d'entreprise fourni)
+        company_name = getsales_data.get('company_name')
+        if company_name:
+            try:
+                # Récupérer le domaine si disponible
+                domain = getsales_data.get('domain')
+
+                # Chercher ou créer la company
+                company_result = self.hubspot.get_or_create_company(
+                    name=company_name,
+                    domain=domain,
+                    additional_properties={
+                        'city': getsales_data.get('company_city'),
+                        'industry': getsales_data.get('company_industry'),
+                    }
+                )
+
+                if company_result:
+                    company_id = company_result['id']
+                    action = "trouvée" if not company_result.get('created') else "créée"
+                    logger.info(f"Company {action}: {company_name} (ID: {company_id})")
+
+                    # 3. Associer le contact à la company
+                    if self.hubspot.associate_contact_company(contact_id, company_id):
+                        result['company_id'] = company_id
+                        logger.info(f"Contact {contact_id} associé à company {company_id}")
+                    else:
+                        logger.warning(f"Échec association contact-company")
+                else:
+                    logger.warning(f"Impossible de créer/trouver company: {company_name}")
+
+            except Exception as e:
+                logger.error(f"Erreur gestion company: {e}")
+                # Le contact est créé, on continue sans company
+
+        return result
 
     def _merge_hubspot_contact(
         self,
