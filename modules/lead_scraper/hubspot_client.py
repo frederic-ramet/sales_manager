@@ -142,11 +142,7 @@ class HubSpotClient:
             "type": "string",
             "fieldType": "text",
             "groupName": "contactinformation",
-<<<<<<< HEAD
             "description": "Titre LinkedIn du contact (via GetSales)"
-=======
-            "description": "Titre/poste du contact depuis GetSales"
->>>>>>> a6ef17c (fix: add missing GetSales custom properties and use hs_linkedin_url)
         },
         "getsales_bio": {
             "name": "getsales_bio",
@@ -154,11 +150,7 @@ class HubSpotClient:
             "type": "string",
             "fieldType": "textarea",
             "groupName": "contactinformation",
-<<<<<<< HEAD
             "description": "Description LinkedIn du contact (via GetSales)"
-=======
-            "description": "Biographie du contact depuis GetSales"
->>>>>>> a6ef17c (fix: add missing GetSales custom properties and use hs_linkedin_url)
         },
     }
 
