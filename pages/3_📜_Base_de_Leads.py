@@ -1,14 +1,29 @@
 """
 Page Base de Leads - Hub central de tous les leads multi-sources.
 """
+import json
 import os
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 
 from modules.lead_scraper import ContactManager, HubSpotClient, PappersClient, CSVImporter
 from modules.deduplication import DeduplicationMatcher
 from components import render_top_nav, hide_sidebar, render_footer
+
+
+def load_referentiel(filepath: str):
+    """Charge un fichier référentiel JSON."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def format_option(item):
+    """Formate une option pour les selectbox (code - label)."""
+    return f"{item['code']} - {item['label']}"
 
 # Navigation
 hide_sidebar()
@@ -28,9 +43,14 @@ def load_documentation():
         return "Documentation non disponible."
 
 
+# Charger les référentiels
+codes_ape = load_referentiel("data/codes_ape.json")
+departements = load_referentiel("data/departements.json")
+
 # Initialiser le gestionnaire de contacts
 contact_manager = ContactManager()
 stats = contact_manager.get_stats()
+filter_options = contact_manager.get_filter_options()
 
 # Stats globales avec sources
 st.subheader("📈 Vue d'ensemble")
@@ -72,13 +92,16 @@ with tab1:
     if stats['total_leads'] == 0:
         st.info("ℹ️ Aucun lead dans la base. Lancez votre première extraction !")
     else:
-        # Filtres
+        # === FILTRES PRINCIPAUX ===
         col1, col2, col3, col4 = st.columns(4)
+
+        # Construire la liste des sources disponibles
+        available_sources = ["Toutes"] + filter_options.get('sources', [])
 
         with col1:
             filter_source = st.selectbox(
                 "Source",
-                options=["Toutes", "sirene", "hubspot", "getsales"],
+                options=available_sources,
                 index=0
             )
 
@@ -91,7 +114,7 @@ with tab1:
 
         with col3:
             search_term = st.text_input(
-                "Rechercher",
+                "🔍 Rechercher",
                 placeholder="SIREN, nom, email..."
             )
 
@@ -102,22 +125,135 @@ with tab1:
                 index=1
             )
 
-        # Construire les filtres
+        # === FILTRES AVANCÉS (expander) ===
+        with st.expander("⚙️ Filtres avancés", expanded=False):
+            # Ligne 1: Secteurs et Localisation
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                # Filtrer les codes APE disponibles dans la base
+                available_ape_codes = filter_options.get('ape_codes', [])
+                # Créer liste avec labels si le référentiel est chargé
+                ape_options = []
+                for code in available_ape_codes:
+                    matching = [item for item in codes_ape if item['code'] == code]
+                    if matching:
+                        ape_options.append(matching[0])
+                    else:
+                        ape_options.append({'code': code, 'label': code})
+
+                selected_ape = st.multiselect(
+                    "🏭 Secteurs APE",
+                    options=ape_options,
+                    format_func=format_option,
+                    help="Filtrer par code APE"
+                )
+
+            with col2:
+                # Départements disponibles
+                available_depts = filter_options.get('departements', [])
+                dept_options = []
+                for code in available_depts:
+                    matching = [item for item in departements if item['code'] == code]
+                    if matching:
+                        dept_options.append(matching[0])
+                    else:
+                        dept_options.append({'code': code, 'label': f"Département {code}"})
+
+                selected_dept = st.multiselect(
+                    "📍 Départements",
+                    options=dept_options,
+                    format_func=format_option,
+                    help="Filtrer par département"
+                )
+
+            with col3:
+                filter_city = st.text_input(
+                    "🏙️ Ville",
+                    placeholder="Paris, Lyon..."
+                )
+
+            # Ligne 2: Filtres contacts
+            st.markdown("**Filtrer par données disponibles**")
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                filter_has_email = st.checkbox("📧 Avec email", value=False)
+
+            with col2:
+                filter_has_phone = st.checkbox("📞 Avec téléphone", value=False)
+
+            with col3:
+                filter_has_linkedin = st.checkbox("🔗 Avec LinkedIn", value=False)
+
+            with col4:
+                # Campagnes disponibles
+                available_campaigns = ["Toutes"] + filter_options.get('campaigns', [])
+                filter_campaign = st.selectbox(
+                    "📁 Campagne",
+                    options=available_campaigns,
+                    index=0
+                )
+
+            # Ligne 3: Dates
+            col1, col2 = st.columns(2)
+
+            with col1:
+                filter_date_after = st.date_input(
+                    "Créé après",
+                    value=None,
+                    min_value=date(2020, 1, 1),
+                    max_value=date.today(),
+                    help="Date de création minimum"
+                )
+
+            with col2:
+                filter_date_before = st.date_input(
+                    "Créé avant",
+                    value=None,
+                    min_value=date(2020, 1, 1),
+                    max_value=date.today(),
+                    help="Date de création maximum"
+                )
+
+        # === CONSTRUIRE LES FILTRES ===
         source_filter = None if filter_source == "Toutes" else filter_source
         search_filter = search_term if search_term else None
 
-        # Récupérer les contacts
-        # Déterminer le filtre enriched
+        # Filtre enriched
         enriched_filter = None
         if filter_enriched == "Enrichis":
             enriched_filter = True
         elif filter_enriched == "Non enrichis":
             enriched_filter = False
 
+        # Filtres avancés
+        ape_codes_filter = [item['code'] for item in selected_ape] if selected_ape else None
+        dept_filter = [item['code'] for item in selected_dept] if selected_dept else None
+        city_filter = filter_city if filter_city else None
+        campaign_filter = None if filter_campaign == "Toutes" else filter_campaign
+        date_after_str = filter_date_after.strftime("%Y-%m-%d") if filter_date_after else None
+        date_before_str = filter_date_before.strftime("%Y-%m-%d") if filter_date_before else None
+
+        # Filtres has_*
+        has_email_filter = True if filter_has_email else None
+        has_phone_filter = True if filter_has_phone else None
+        has_linkedin_filter = True if filter_has_linkedin else None
+
+        # === RECHERCHE ===
         contacts = contact_manager.search(
             query=search_filter,
             source=source_filter,
             enriched=enriched_filter,
+            campaign_id=campaign_filter,
+            ape_codes=ape_codes_filter,
+            departements=dept_filter,
+            city=city_filter,
+            has_email=has_email_filter,
+            has_phone=has_phone_filter,
+            has_linkedin=has_linkedin_filter,
+            created_after=date_after_str,
+            created_before=date_before_str,
             limit=limit
         )
 

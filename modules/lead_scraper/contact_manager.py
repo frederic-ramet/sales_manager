@@ -371,6 +371,15 @@ class ContactManager:
         synced: bool = None,
         status: str = 'active',
         campaign_id: str = None,
+        # Nouveaux filtres avancés
+        ape_codes: List[str] = None,
+        departements: List[str] = None,
+        city: str = None,
+        has_email: bool = None,
+        has_phone: bool = None,
+        has_linkedin: bool = None,
+        created_after: str = None,
+        created_before: str = None,
         limit: int = 100,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
@@ -379,11 +388,19 @@ class ContactManager:
 
         Args:
             query: Recherche texte (siren, nom, email, entreprise)
-            source: Filtrer par source (sirene, hubspot, getsales)
+            source: Filtrer par source (sirene, hubspot, getsales, csv_import)
             enriched: Filtrer par statut enrichissement
             synced: Filtrer par statut sync HubSpot
             status: Statut (active, archived, deleted)
             campaign_id: Filtrer par campagne
+            ape_codes: Liste de codes APE
+            departements: Liste de départements (2 premiers chiffres du code postal)
+            city: Filtrer par ville (recherche partielle)
+            has_email: Filtrer contacts avec email
+            has_phone: Filtrer contacts avec téléphone
+            has_linkedin: Filtrer contacts avec LinkedIn
+            created_after: Date min de création (format YYYY-MM-DD)
+            created_before: Date max de création (format YYYY-MM-DD)
             limit: Nombre max de résultats
             offset: Offset pour pagination
 
@@ -424,6 +441,50 @@ class ContactManager:
             """)
             search_term = f"%{query}%"
             params.extend([search_term] * 6)
+
+        # Filtres avancés
+        if ape_codes:
+            placeholders = ','.join(['?' for _ in ape_codes])
+            conditions.append(f"ape_code IN ({placeholders})")
+            params.extend(ape_codes)
+
+        if departements:
+            # Filtrer par les 2 premiers chiffres du code postal
+            dept_conditions = []
+            for dept in departements:
+                dept_conditions.append("postal_code LIKE ?")
+                params.append(f"{dept}%")
+            conditions.append(f"({' OR '.join(dept_conditions)})")
+
+        if city:
+            conditions.append("city LIKE ?")
+            params.append(f"%{city}%")
+
+        if has_email is not None:
+            if has_email:
+                conditions.append("email IS NOT NULL AND email != ''")
+            else:
+                conditions.append("(email IS NULL OR email = '')")
+
+        if has_phone is not None:
+            if has_phone:
+                conditions.append("(phone IS NOT NULL AND phone != '') OR (mobile IS NOT NULL AND mobile != '')")
+            else:
+                conditions.append("(phone IS NULL OR phone = '') AND (mobile IS NULL OR mobile = '')")
+
+        if has_linkedin is not None:
+            if has_linkedin:
+                conditions.append("linkedin_url IS NOT NULL AND linkedin_url != ''")
+            else:
+                conditions.append("(linkedin_url IS NULL OR linkedin_url = '')")
+
+        if created_after:
+            conditions.append("created_at >= ?")
+            params.append(created_after)
+
+        if created_before:
+            conditions.append("created_at <= ?")
+            params.append(created_before + " 23:59:59")
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -519,6 +580,65 @@ class ContactManager:
                 'total_leads': total,
                 'dernier_lead': last_contact,
                 'campagnes_recentes': campaigns,
+            }
+
+    def get_filter_options(self) -> Dict[str, List[str]]:
+        """
+        Récupère les valeurs distinctes pour les filtres de recherche.
+
+        Returns:
+            Dict avec listes de valeurs pour APE, villes, campagnes, etc.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            # Codes APE distincts (non vides)
+            cursor.execute("""
+                SELECT DISTINCT ape_code FROM unified_contacts
+                WHERE status = 'active' AND ape_code IS NOT NULL AND ape_code != ''
+                ORDER BY ape_code
+            """)
+            ape_codes = [row[0] for row in cursor.fetchall()]
+
+            # Départements distincts (2 premiers chiffres du code postal)
+            cursor.execute("""
+                SELECT DISTINCT SUBSTR(postal_code, 1, 2) as dept FROM unified_contacts
+                WHERE status = 'active' AND postal_code IS NOT NULL AND LENGTH(postal_code) >= 2
+                ORDER BY dept
+            """)
+            departements = [row[0] for row in cursor.fetchall()]
+
+            # Villes distinctes
+            cursor.execute("""
+                SELECT DISTINCT city FROM unified_contacts
+                WHERE status = 'active' AND city IS NOT NULL AND city != ''
+                ORDER BY city
+                LIMIT 500
+            """)
+            cities = [row[0] for row in cursor.fetchall()]
+
+            # Campagnes
+            cursor.execute("""
+                SELECT DISTINCT campaign_id FROM unified_contacts
+                WHERE status = 'active' AND campaign_id IS NOT NULL
+                ORDER BY campaign_id DESC
+            """)
+            campaigns = [row[0] for row in cursor.fetchall()]
+
+            # Sources
+            cursor.execute("""
+                SELECT DISTINCT source FROM unified_contacts
+                WHERE status = 'active' AND source IS NOT NULL
+                ORDER BY source
+            """)
+            sources = [row[0] for row in cursor.fetchall()]
+
+            return {
+                'ape_codes': ape_codes,
+                'departements': departements,
+                'cities': cities,
+                'campaigns': campaigns,
+                'sources': sources,
             }
 
     # =========================================================================
