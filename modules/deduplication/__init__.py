@@ -1,7 +1,21 @@
 """
 Service de déduplication réutilisable.
 Utilisé par: GetSales sync, Recherche SIRENE, Import CSV
-"""
-from .matcher import DeduplicationMatcher, MatchResult, MatchConfidence
 
-__all__ = ['DeduplicationMatcher', 'MatchResult', 'MatchConfidence']
+Supporte les deux schémas:
+- Ancien: unified_contacts (tout dans une table)
+- Nouveau: contacts + companies (tables séparées)
+"""
+from .matcher import (
+    DeduplicationMatcher,
+    MatchResult,
+    MatchConfidence,
+    CompanyMatchResult
+)
+
+__all__ = [
+    'DeduplicationMatcher',
+    'MatchResult',
+    'MatchConfidence',
+    'CompanyMatchResult'
+]

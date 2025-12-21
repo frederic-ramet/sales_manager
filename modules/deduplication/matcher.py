@@ -18,12 +18,16 @@ Architecture:
 
     for match in results:
         print(f"{match.confidence}: {match.contact['company_name']} - {match.match_type}")
+
+Supporte les deux schémas:
+- Ancien: unified_contacts (tout dans une table)
+- Nouveau: contacts + companies (tables séparées)
 """
 import logging
 import sqlite3
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +42,8 @@ class MatchConfidence(Enum):
 
 @dataclass
 class MatchResult:
-    """Résultat d'un match de déduplication."""
-    contact: Dict[str, Any]          # Contact trouvé dans unified_contacts
+    """Résultat d'un match de déduplication (contact)."""
+    contact: Dict[str, Any]          # Contact trouvé dans contacts/unified_contacts
     match_type: str                   # Type de match (email, linkedin, fullname_company, etc.)
     confidence: MatchConfidence       # Niveau de confiance
     similarity_score: float = 1.0     # Score de similarité (1.0 = exact)
@@ -55,6 +59,32 @@ class MatchResult:
             'email': self.contact.get('email'),
             'linkedin_url': self.contact.get('linkedin_url'),
             'source': self.contact.get('source'),
+            'match_type': self.match_type,
+            'confidence': self.confidence.value,
+            'similarity_score': self.similarity_score,
+            'matched_fields': self.matched_fields
+        }
+
+
+@dataclass
+class CompanyMatchResult:
+    """Résultat d'un match de déduplication (entreprise) - nouveau schéma."""
+    company: Dict[str, Any]          # Entreprise trouvée dans companies
+    match_type: str                   # Type de match (siren, domain, name_fuzzy, etc.)
+    confidence: MatchConfidence       # Niveau de confiance
+    similarity_score: float = 1.0     # Score de similarité (1.0 = exact)
+    matched_fields: List[str] = field(default_factory=list)  # Champs qui ont matché
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convertit en dict pour stockage JSON."""
+        return {
+            'id': self.company.get('id'),
+            'uuid': self.company.get('uuid'),
+            'company_name': self.company.get('company_name'),
+            'siren': self.company.get('siren'),
+            'website': self.company.get('website'),
+            'city': self.company.get('city'),
+            'total_contacts': self.company.get('total_contacts', 0),
             'match_type': self.match_type,
             'confidence': self.confidence.value,
             'similarity_score': self.similarity_score,
@@ -83,13 +113,35 @@ class DeduplicationMatcher:
         Initialise le matcher.
 
         Args:
-            db_path: Chemin vers la base SQLite unified_contacts.
+            db_path: Chemin vers la base SQLite.
                      Si None, utilise le chemin par défaut.
         """
         if db_path is None:
             from pathlib import Path
-            db_path = Path(__file__).parent.parent.parent / "data" / "contacts.db"
+            db_path = Path(__file__).parent.parent.parent / "data" / "leads.db"
         self.db_path = str(db_path)
+
+        # Détecter le schéma (nouveau vs ancien)
+        self._new_schema = self._detect_schema()
+        self._contacts_table = 'contacts' if self._new_schema else 'unified_contacts'
+
+    def _detect_schema(self) -> bool:
+        """Détecte si le nouveau schéma (contacts + companies) est disponible."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name='companies'
+                """)
+                return cursor.fetchone() is not None
+        except Exception:
+            return False
+
+    @property
+    def has_new_schema(self) -> bool:
+        """Retourne True si le nouveau schéma est disponible."""
+        return self._new_schema
 
     def find_matches(
         self,
@@ -199,10 +251,12 @@ class DeduplicationMatcher:
         """Trouve les matches exacts par identifiants uniques."""
         results = []
 
+        table = self._contacts_table
+
         # Par HubSpot ID
         if hubspot_contact_id:
             cursor.execute(
-                "SELECT * FROM unified_contacts WHERE hubspot_contact_id = ? AND status = 'active'",
+                f"SELECT * FROM {table} WHERE hubspot_contact_id = ? AND status = 'active'",
                 (hubspot_contact_id,)
             )
             for row in cursor.fetchall():
@@ -211,7 +265,7 @@ class DeduplicationMatcher:
         # Par GetSales UUID
         if getsales_uuid:
             cursor.execute(
-                "SELECT * FROM unified_contacts WHERE getsales_uuid = ? AND status = 'active'",
+                f"SELECT * FROM {table} WHERE getsales_uuid = ? AND status = 'active'",
                 (getsales_uuid,)
             )
             for row in cursor.fetchall():
@@ -221,7 +275,7 @@ class DeduplicationMatcher:
         if linkedin_url:
             normalized = self._normalize_linkedin_url(linkedin_url)
             cursor.execute(
-                "SELECT * FROM unified_contacts WHERE linkedin_url = ? AND status = 'active'",
+                f"SELECT * FROM {table} WHERE linkedin_url = ? AND status = 'active'",
                 (normalized,)
             )
             for row in cursor.fetchall():
@@ -231,16 +285,16 @@ class DeduplicationMatcher:
         if email:
             email_lower = email.lower().strip()
             cursor.execute(
-                "SELECT * FROM unified_contacts WHERE LOWER(email) = ? AND status = 'active'",
+                f"SELECT * FROM {table} WHERE LOWER(email) = ? AND status = 'active'",
                 (email_lower,)
             )
             for row in cursor.fetchall():
                 results.append((dict(row), 'email'))
 
-        # Par SIREN
-        if siren:
+        # Par SIREN (ancien schéma seulement - dans nouveau schéma, SIREN est dans companies)
+        if siren and not self._new_schema:
             cursor.execute(
-                "SELECT * FROM unified_contacts WHERE siren = ? AND status = 'active'",
+                f"SELECT * FROM {table} WHERE siren = ? AND status = 'active'",
                 (siren,)
             )
             for row in cursor.fetchall():
@@ -258,6 +312,7 @@ class DeduplicationMatcher:
     ) -> List[MatchResult]:
         """Trouve les matches par prénom + nom + entreprise (exact et fuzzy)."""
         results = []
+        table = self._contacts_table
 
         # Normaliser les inputs
         fn_norm = self._normalize_name(firstname)
@@ -265,16 +320,31 @@ class DeduplicationMatcher:
         company_norm = self._normalize_company(company_name)
 
         # Chercher tous les contacts avec un nom similaire
-        cursor.execute("""
-            SELECT * FROM unified_contacts
-            WHERE status = 'active'
-            AND (
-                (LOWER(firstname) = ? AND LOWER(lastname) = ? AND LOWER(company_name) = ?)
-                OR (LOWER(firstname) = ? AND LOWER(lastname) = ?)
-                OR LOWER(company_name) = ?
-            )
-            LIMIT 50
-        """, (fn_norm, ln_norm, company_norm, fn_norm, ln_norm, company_norm))
+        # Pour nouveau schéma, company_name peut être dans la table companies via JOIN
+        if self._new_schema:
+            cursor.execute(f"""
+                SELECT c.*, comp.company_name, comp.siren, comp.website
+                FROM {table} c
+                LEFT JOIN companies comp ON c.company_id = comp.id
+                WHERE c.status = 'active'
+                AND (
+                    (LOWER(c.firstname) = ? AND LOWER(c.lastname) = ? AND LOWER(comp.company_name) = ?)
+                    OR (LOWER(c.firstname) = ? AND LOWER(c.lastname) = ?)
+                    OR LOWER(comp.company_name) = ?
+                )
+                LIMIT 50
+            """, (fn_norm, ln_norm, company_norm, fn_norm, ln_norm, company_norm))
+        else:
+            cursor.execute(f"""
+                SELECT * FROM {table}
+                WHERE status = 'active'
+                AND (
+                    (LOWER(firstname) = ? AND LOWER(lastname) = ? AND LOWER(company_name) = ?)
+                    OR (LOWER(firstname) = ? AND LOWER(lastname) = ?)
+                    OR LOWER(company_name) = ?
+                )
+                LIMIT 50
+            """, (fn_norm, ln_norm, company_norm, fn_norm, ln_norm, company_norm))
 
         for row in cursor.fetchall():
             contact = dict(row)
@@ -315,12 +385,13 @@ class DeduplicationMatcher:
     ) -> List[MatchResult]:
         """Trouve les matches par prénom + nom seul."""
         results = []
+        table = self._contacts_table
 
         fn_norm = self._normalize_name(firstname)
         ln_norm = self._normalize_name(lastname)
 
-        cursor.execute("""
-            SELECT * FROM unified_contacts
+        cursor.execute(f"""
+            SELECT * FROM {table}
             WHERE LOWER(firstname) = ? AND LOWER(lastname) = ?
             AND status = 'active'
             LIMIT 20
@@ -350,15 +421,26 @@ class DeduplicationMatcher:
     ) -> List[MatchResult]:
         """Trouve les matches par entreprise (exact et fuzzy)."""
         results = []
+        table = self._contacts_table
         company_norm = self._normalize_company(company_name)
 
         # Match exact sur entreprise
-        cursor.execute("""
-            SELECT * FROM unified_contacts
-            WHERE LOWER(company_name) = ?
-            AND status = 'active'
-            LIMIT 30
-        """, (company_norm,))
+        if self._new_schema:
+            cursor.execute(f"""
+                SELECT c.*, comp.company_name, comp.siren, comp.website
+                FROM {table} c
+                LEFT JOIN companies comp ON c.company_id = comp.id
+                WHERE LOWER(comp.company_name) = ?
+                AND c.status = 'active'
+                LIMIT 30
+            """, (company_norm,))
+        else:
+            cursor.execute(f"""
+                SELECT * FROM {table}
+                WHERE LOWER(company_name) = ?
+                AND status = 'active'
+                LIMIT 30
+            """, (company_norm,))
 
         for row in cursor.fetchall():
             contact = dict(row)
@@ -375,12 +457,22 @@ class DeduplicationMatcher:
 
         # Fuzzy match sur entreprise si demandé
         if include_low_confidence and len(results) < 10:
-            cursor.execute("""
-                SELECT * FROM unified_contacts
-                WHERE company_name IS NOT NULL
-                AND status = 'active'
-                LIMIT 500
-            """)
+            if self._new_schema:
+                cursor.execute(f"""
+                    SELECT c.*, comp.company_name, comp.siren, comp.website
+                    FROM {table} c
+                    LEFT JOIN companies comp ON c.company_id = comp.id
+                    WHERE comp.company_name IS NOT NULL
+                    AND c.status = 'active'
+                    LIMIT 500
+                """)
+            else:
+                cursor.execute(f"""
+                    SELECT * FROM {table}
+                    WHERE company_name IS NOT NULL
+                    AND status = 'active'
+                    LIMIT 500
+                """)
 
             for row in cursor.fetchall():
                 contact = dict(row)
@@ -500,24 +592,41 @@ class DeduplicationMatcher:
         """
         results = []
         query_norm = query.lower().strip()
+        table = self._contacts_table
 
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
 
-                cursor.execute("""
-                    SELECT * FROM unified_contacts
-                    WHERE status = 'active'
-                    AND (
-                        LOWER(firstname) LIKE ?
-                        OR LOWER(lastname) LIKE ?
-                        OR LOWER(company_name) LIKE ?
-                        OR LOWER(email) LIKE ?
-                    )
-                    ORDER BY company_name, lastname
-                    LIMIT ?
-                """, (f"%{query_norm}%", f"%{query_norm}%", f"%{query_norm}%", f"%{query_norm}%", limit))
+                if self._new_schema:
+                    cursor.execute(f"""
+                        SELECT c.*, comp.company_name, comp.siren, comp.website
+                        FROM {table} c
+                        LEFT JOIN companies comp ON c.company_id = comp.id
+                        WHERE c.status = 'active'
+                        AND (
+                            LOWER(c.firstname) LIKE ?
+                            OR LOWER(c.lastname) LIKE ?
+                            OR LOWER(comp.company_name) LIKE ?
+                            OR LOWER(c.email) LIKE ?
+                        )
+                        ORDER BY comp.company_name, c.lastname
+                        LIMIT ?
+                    """, (f"%{query_norm}%", f"%{query_norm}%", f"%{query_norm}%", f"%{query_norm}%", limit))
+                else:
+                    cursor.execute(f"""
+                        SELECT * FROM {table}
+                        WHERE status = 'active'
+                        AND (
+                            LOWER(firstname) LIKE ?
+                            OR LOWER(lastname) LIKE ?
+                            OR LOWER(company_name) LIKE ?
+                            OR LOWER(email) LIKE ?
+                        )
+                        ORDER BY company_name, lastname
+                        LIMIT ?
+                    """, (f"%{query_norm}%", f"%{query_norm}%", f"%{query_norm}%", f"%{query_norm}%", limit))
 
                 for row in cursor.fetchall():
                     results.append(dict(row))
@@ -526,3 +635,151 @@ class DeduplicationMatcher:
             logger.error(f"Erreur recherche contacts: {e}")
 
         return results
+
+    # =========================================================================
+    # MÉTHODES ENTREPRISES (nouveau schéma uniquement)
+    # =========================================================================
+
+    def find_company_matches(
+        self,
+        company_name: str = None,
+        siren: str = None,
+        website: str = None,
+        include_low_confidence: bool = True
+    ) -> List[CompanyMatchResult]:
+        """
+        Trouve les entreprises correspondantes (nouveau schéma uniquement).
+
+        Args:
+            company_name: Nom de l'entreprise
+            siren: Numéro SIREN
+            website: Site web / domaine
+            include_low_confidence: Inclure les matches fuzzy
+
+        Returns:
+            Liste de CompanyMatchResult triés par confiance décroissante
+        """
+        if not self._new_schema:
+            logger.warning("find_company_matches() appelé sans nouveau schéma disponible")
+            return []
+
+        matches: List[CompanyMatchResult] = []
+        seen_ids: Set[int] = set()
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                # 1. Match exact par SIREN
+                if siren:
+                    cursor.execute("""
+                        SELECT * FROM companies WHERE siren = ?
+                    """, (siren,))
+                    for row in cursor.fetchall():
+                        company = dict(row)
+                        if company['id'] not in seen_ids:
+                            seen_ids.add(company['id'])
+                            matches.append(CompanyMatchResult(
+                                company=company,
+                                match_type='siren',
+                                confidence=MatchConfidence.EXACT,
+                                similarity_score=1.0,
+                                matched_fields=['siren']
+                            ))
+
+                # 2. Match par domaine/website
+                if website:
+                    domain = self._extract_domain(website)
+                    if domain:
+                        cursor.execute("""
+                            SELECT * FROM companies WHERE website LIKE ?
+                        """, (f"%{domain}%",))
+                        for row in cursor.fetchall():
+                            company = dict(row)
+                            if company['id'] not in seen_ids:
+                                seen_ids.add(company['id'])
+                                matches.append(CompanyMatchResult(
+                                    company=company,
+                                    match_type='domain',
+                                    confidence=MatchConfidence.HIGH,
+                                    similarity_score=1.0,
+                                    matched_fields=['website']
+                                ))
+
+                # 3. Match exact par nom
+                if company_name:
+                    company_norm = self._normalize_company(company_name)
+                    cursor.execute("""
+                        SELECT * FROM companies WHERE LOWER(company_name) = ?
+                    """, (company_norm,))
+                    for row in cursor.fetchall():
+                        company = dict(row)
+                        if company['id'] not in seen_ids:
+                            seen_ids.add(company['id'])
+                            matches.append(CompanyMatchResult(
+                                company=company,
+                                match_type='name_exact',
+                                confidence=MatchConfidence.HIGH,
+                                similarity_score=1.0,
+                                matched_fields=['company_name']
+                            ))
+
+                # 4. Match fuzzy par nom
+                if company_name and include_low_confidence and len(matches) < 10:
+                    company_norm = self._normalize_company(company_name)
+                    cursor.execute("""
+                        SELECT * FROM companies WHERE company_name IS NOT NULL LIMIT 500
+                    """)
+                    for row in cursor.fetchall():
+                        company = dict(row)
+                        if company['id'] in seen_ids:
+                            continue
+
+                        db_name_norm = self._normalize_company(company.get('company_name') or '')
+                        if not db_name_norm:
+                            continue
+
+                        score = self._similarity(company_norm, db_name_norm)
+                        if score >= self.FUZZY_THRESHOLD_LOW and score < 1.0:
+                            confidence = (
+                                MatchConfidence.HIGH if score >= self.FUZZY_THRESHOLD_HIGH
+                                else MatchConfidence.MEDIUM if score >= self.FUZZY_THRESHOLD_MEDIUM
+                                else MatchConfidence.LOW
+                            )
+                            seen_ids.add(company['id'])
+                            matches.append(CompanyMatchResult(
+                                company=company,
+                                match_type='name_fuzzy',
+                                confidence=confidence,
+                                similarity_score=score,
+                                matched_fields=['company_name']
+                            ))
+
+        except Exception as e:
+            logger.error(f"Erreur recherche entreprises: {e}")
+
+        # Trier par confiance
+        confidence_order = {
+            MatchConfidence.EXACT: 0,
+            MatchConfidence.HIGH: 1,
+            MatchConfidence.MEDIUM: 2,
+            MatchConfidence.LOW: 3
+        }
+        matches.sort(key=lambda m: (confidence_order[m.confidence], -m.similarity_score))
+
+        return matches
+
+    def _extract_domain(self, url: str) -> Optional[str]:
+        """Extrait le domaine d'une URL."""
+        if not url:
+            return None
+
+        url = url.lower().strip()
+        # Supprimer le protocole
+        for prefix in ['https://', 'http://', 'www.']:
+            if url.startswith(prefix):
+                url = url[len(prefix):]
+        # Prendre le premier segment
+        domain = url.split('/')[0]
+        return domain if domain else None
