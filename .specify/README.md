@@ -14,6 +14,8 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 004 | **GetSales Sync** | Sync leads LinkedIn → HubSpot | ✅ Done |
 | 005 | **Leads Hub** | Base centralisée + enrichissement bidirectionnel | ✅ Done (via 006) |
 | 006 | **Unified Data Model** | Refonte modèle données unifié | ✅ Done |
+| 007 | **Top Navigation** | Navigation haut de page + masquer sidebar | 🔲 Todo |
+| 008 | **CSV Import** | Import manuel CSV avec mapping colonnes | 🔲 Todo |
 
 ---
 
@@ -40,7 +42,11 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 │   │   └── tasks.md
 │   ├── 005-leads-hub/
 │   │   └── spec.md
-│   └── 006-unified-data-model/
+│   ├── 006-unified-data-model/
+│   │   └── spec.md
+│   ├── 007-top-navigation/
+│   │   └── spec.md
+│   └── 008-csv-import/
 │       └── spec.md
 └── _to_migrate_leadscraper/      # Code legacy (migré)
 ```
@@ -102,6 +108,23 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 - [x] Enrichissement Pappers avec traçabilité
 - [x] Déduplication cross-sources (email, SIREN, LinkedIn)
 
+### Phase 7 : Top Navigation (Module 007) 🔲 Todo
+> Refonte navigation : top bar + masquer sidebar
+
+- [ ] T7.1 - Masquer sidebar globalement (CSS + config)
+- [ ] T7.2 - Créer composant navigation top bar
+- [ ] T7.3 - Intégrer navigation dans toutes les pages
+- [ ] T7.4 - Migrer filtres Recherche Leads dans la page
+- [ ] T7.5 - Nettoyer les autres pages
+
+### Phase 8 : CSV Import (Module 008) 🔲 Todo
+> Import manuel de fichiers CSV avec mapping colonnes
+
+- [ ] T8.1 - Interface upload CSV (nouvel onglet Base de Leads)
+- [ ] T8.2 - Classe CSVImporter (détection encodage/séparateur, mapping auto)
+- [ ] T8.3 - Interface mapping interactif
+- [ ] T8.4 - Validation et gestion erreurs
+
 ---
 
 ## Temps estimés
@@ -114,6 +137,8 @@ Portail modulaire pour l'équipe Sales & Finance de Genie Factory.
 | 004 - GetSales Sync | ~9 jours | ✅ |
 | 005 - Leads Hub | ~14h | ✅ (via 006) |
 | 006 - Unified Data Model | ~16h | ✅ |
+| 007 - Top Navigation | ~7h | 🔲 |
+| 008 - CSV Import | ~8h | 🔲 |
 
 ---
 
