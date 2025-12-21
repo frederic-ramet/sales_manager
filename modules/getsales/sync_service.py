@@ -239,6 +239,17 @@ class GetSalesSyncService:
                     elif merge_data.get('create_new_company'):
                         company_choice = {'type': 'create_new'}
 
+                # Récupérer les messages LinkedIn pour ce lead
+                lead_uuid = getsales_data.get('uuid')
+                if lead_uuid and self.getsales:
+                    try:
+                        messages = self.getsales.fetch_lead_messages(lead_uuid)
+                        getsales_data['_messages'] = messages
+                        logger.info(f"Messages récupérés pour lead {lead_uuid}: {len(messages)}")
+                    except Exception as e:
+                        logger.warning(f"Impossible de récupérer les messages: {e}")
+                        getsales_data['_messages'] = []
+
                 # Créer nouveau contact HubSpot
                 contact = self._create_hubspot_contact(getsales_data, company_choice=company_choice)
 
