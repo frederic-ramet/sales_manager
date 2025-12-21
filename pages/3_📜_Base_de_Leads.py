@@ -121,9 +121,14 @@ with tab1:
         with col4:
             limit = st.selectbox(
                 "Résultats",
-                options=[50, 100, 200, 500],
+                options=[50, 100, 200, 500, 1000, 2000, 5000],
                 index=1
             )
+
+        # Bouton de recherche
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            search_button = st.button("🔍 Rechercher", type="primary", use_container_width=True)
 
         # === FILTRES AVANCÉS (expander) ===
         with st.expander("⚙️ Filtres avancés", expanded=False):
@@ -241,27 +246,41 @@ with tab1:
         has_linkedin_filter = True if filter_has_linkedin else None
 
         # === RECHERCHE ===
-        contacts = contact_manager.search(
-            query=search_filter,
-            source=source_filter,
-            enriched=enriched_filter,
-            campaign_id=campaign_filter,
-            ape_codes=ape_codes_filter,
-            departements=dept_filter,
-            city=city_filter,
-            has_email=has_email_filter,
-            has_phone=has_phone_filter,
-            has_linkedin=has_linkedin_filter,
-            created_after=date_after_str,
-            created_before=date_before_str,
-            limit=limit
-        )
+        # Utiliser session state pour garder les résultats entre les interactions
+        if 'search_results' not in st.session_state:
+            st.session_state.search_results = None
+            st.session_state.search_executed = False
+
+        # Exécuter la recherche si bouton cliqué ou première fois
+        if search_button or not st.session_state.search_executed:
+            st.session_state.search_results = contact_manager.search(
+                query=search_filter,
+                source=source_filter,
+                enriched=enriched_filter,
+                campaign_id=campaign_filter,
+                ape_codes=ape_codes_filter,
+                departements=dept_filter,
+                city=city_filter,
+                has_email=has_email_filter,
+                has_phone=has_phone_filter,
+                has_linkedin=has_linkedin_filter,
+                created_after=date_after_str,
+                created_before=date_before_str,
+                limit=limit
+            )
+            st.session_state.search_executed = True
+
+        contacts = st.session_state.search_results
 
         if contacts:
             df = pd.DataFrame(contacts)
 
-            # Colonnes à afficher avec source (nouveau schéma)
-            display_cols = ['source', 'siren', 'company_name', 'email', 'city', 'ape_code', 'created_at']
+            # Colonnes à afficher - étendu avec tous les champs utiles
+            display_cols = [
+                'source', 'firstname', 'lastname', 'company_name', 'email', 'phone',
+                'job_title', 'linkedin_url', 'city', 'siren', 'ape_code',
+                'getsales_uuid', 'hubspot_contact_id', 'created_at'
+            ]
             display_cols = [col for col in display_cols if col in df.columns]
 
             # Formater la date
@@ -270,8 +289,8 @@ with tab1:
 
             # Ajouter emoji source
             if 'source' in df.columns:
-                source_emoji = {'sirene': '🔍', 'hubspot': '🟠', 'getsales': '💼'}
-                df['source'] = df['source'].apply(lambda x: f"{source_emoji.get(x, '📄')} {x}" if x else "📄 sirene")
+                source_emoji = {'sirene': '🔍', 'hubspot': '🟠', 'getsales': '💼', 'csv_import': '📄'}
+                df['source'] = df['source'].apply(lambda x: f"{source_emoji.get(x, '📄')} {x}" if x else "📄 N/A")
 
             # Sélection multiple
             st.markdown(f"**{len(contacts)} contacts trouvés**")
@@ -287,7 +306,7 @@ with tab1:
                 df_display,
                 use_container_width=True,
                 hide_index=True,
-                height=400,
+                height=600,
                 column_config={
                     "Sélectionner": st.column_config.CheckboxColumn(
                         "✓",
@@ -296,12 +315,19 @@ with tab1:
                         width="small"
                     ),
                     "source": st.column_config.TextColumn("Source", width="small"),
-                    "siren": st.column_config.TextColumn("SIREN", width="medium"),
-                    "company_name": st.column_config.TextColumn("Entreprise", width="large"),
+                    "firstname": st.column_config.TextColumn("Prénom", width="small"),
+                    "lastname": st.column_config.TextColumn("Nom", width="small"),
+                    "company_name": st.column_config.TextColumn("Entreprise", width="medium"),
                     "email": st.column_config.TextColumn("Email", width="medium"),
-                    "city": st.column_config.TextColumn("Ville", width="medium"),
+                    "phone": st.column_config.TextColumn("Tél", width="small"),
+                    "job_title": st.column_config.TextColumn("Fonction", width="small"),
+                    "linkedin_url": st.column_config.LinkColumn("LinkedIn", width="small", display_text="🔗"),
+                    "city": st.column_config.TextColumn("Ville", width="small"),
+                    "siren": st.column_config.TextColumn("SIREN", width="small"),
                     "ape_code": st.column_config.TextColumn("APE", width="small"),
-                    "created_at": st.column_config.TextColumn("Date", width="medium"),
+                    "getsales_uuid": st.column_config.TextColumn("GetSales", width="small"),
+                    "hubspot_contact_id": st.column_config.TextColumn("HubSpot ID", width="small"),
+                    "created_at": st.column_config.TextColumn("Date", width="small"),
                 },
                 disabled=display_cols  # Désactiver l'édition des colonnes data
             )
