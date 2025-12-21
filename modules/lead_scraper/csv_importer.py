@@ -340,6 +340,23 @@ class CSVImporter:
                 if value and str(value).strip():
                     contact_data[target] = str(value).strip()
 
+            # Extraire les colonnes métadonnées non mappées (date envoi, commentaire, etc.)
+            # et les ajouter aux notes
+            metadata_parts = []
+            for col in self.df.columns:
+                col_lower = col.lower().strip()
+                # Colonnes métadonnées à inclure dans notes
+                if any(meta in col_lower for meta in ['date envoi', 'date_envoi', 'date contact', 'commentaire', 'statut', 'étape']):
+                    if col not in self.mapping.values():  # Pas déjà mappée
+                        value = row.get(col, '')
+                        if value and str(value).strip():
+                            metadata_parts.append(f"{col}: {str(value).strip()}")
+
+            if metadata_parts:
+                existing_notes = contact_data.get('notes', '') or ''
+                metadata_str = ' | '.join(metadata_parts)
+                contact_data['notes'] = f"{existing_notes}\n{metadata_str}".strip() if existing_notes else metadata_str
+
             # Skip si pas de données essentielles
             if not contact_data.get('company_name') and not contact_data.get('email'):
                 result.skipped += 1
@@ -349,22 +366,41 @@ class CSVImporter:
             if contact_data.get('email'):
                 contact_data['email'] = contact_data['email'].lower().strip()
 
-            # Nettoyer le téléphone (garder uniquement chiffres et +)
-            # Gère les numéros multiples séparés par ; (prend le premier)
+            # Nettoyer le téléphone
+            # Gère: séparateur ; OU numéros FR collés (10 chiffres chacun)
             if contact_data.get('phone'):
                 phone = str(contact_data['phone'])
-                # Gérer les numéros multiples séparés par ;
+                phones = []
+
+                # Cas 1: séparateur ;
                 if ';' in phone:
                     phones = [p.strip() for p in phone.split(';') if p.strip()]
-                    phone = phones[0] if phones else ''
+                else:
+                    # Cas 2: détecter numéros FR collés (10 chiffres = 1 numéro)
+                    # Ex: "01 71 32 30 32 06 11 74 94 86" = 20 chiffres = 2 numéros
+                    digits_only = ''.join(c for c in phone if c.isdigit())
+                    if len(digits_only) > 10 and len(digits_only) % 10 == 0:
+                        # Plusieurs numéros FR de 10 chiffres collés
+                        num_phones = len(digits_only) // 10
+                        for i in range(num_phones):
+                            num = digits_only[i*10:(i+1)*10]
+                            # Formater en XX XX XX XX XX
+                            formatted = ' '.join([num[j:j+2] for j in range(0, 10, 2)])
+                            phones.append(formatted)
+                    else:
+                        phones = [phone]
+
+                if phones:
+                    # Prendre le premier, nettoyer
+                    main_phone = phones[0]
+                    main_phone = ''.join(c for c in main_phone if c.isdigit() or c == '+' or c == ' ')
+                    contact_data['phone'] = main_phone.strip()
+
                     # Stocker les numéros supplémentaires dans notes
                     if len(phones) > 1:
                         extra_phones = '; '.join(phones[1:])
                         notes = contact_data.get('notes', '') or ''
                         contact_data['notes'] = f"{notes}\nTél. supplémentaires: {extra_phones}".strip()
-                # Nettoyer (garder uniquement chiffres, + et espaces)
-                phone = ''.join(c for c in phone if c.isdigit() or c == '+' or c == ' ')
-                contact_data['phone'] = phone.strip()
 
             # Vérifier doublons
             is_duplicate = False
