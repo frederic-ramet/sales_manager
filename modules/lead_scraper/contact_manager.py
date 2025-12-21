@@ -138,6 +138,18 @@ class ContactManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_created ON unified_contacts(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_uc_getsales ON unified_contacts(getsales_uuid)")
 
+            # Table de métadonnées de synchronisation
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sync_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sync_type TEXT NOT NULL,
+                    last_sync_date TIMESTAMP NOT NULL,
+                    contacts_synced INTEGER DEFAULT 0,
+                    notes TEXT,
+                    UNIQUE(sync_type)
+                )
+            """)
+
             conn.commit()
 
         logger.info(f"Base de données initialisée: {self.db_path}")
@@ -1296,6 +1308,59 @@ class ContactManager:
 
         logger.info(f"Archivé {archived} contacts plus vieux que {older_than_days} jours")
         return archived
+
+    # =========================================================================
+    # MÉTADONNÉES DE SYNCHRONISATION
+    # =========================================================================
+
+    def update_sync_metadata(self, sync_type: str, contacts_synced: int, notes: str = None):
+        """
+        Met à jour les métadonnées de synchronisation.
+
+        Args:
+            sync_type: Type de sync ('hubspot_full', 'hubspot_incremental', etc.)
+            contacts_synced: Nombre de contacts synchronisés
+            notes: Notes optionnelles
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO sync_metadata (sync_type, last_sync_date, contacts_synced, notes)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(sync_type) DO UPDATE SET
+                    last_sync_date = excluded.last_sync_date,
+                    contacts_synced = excluded.contacts_synced,
+                    notes = excluded.notes
+            """, (sync_type, datetime.now(), contacts_synced, notes))
+            conn.commit()
+
+        logger.info(f"Métadonnées de sync mises à jour: {sync_type}")
+
+    def get_sync_metadata(self, sync_type: str = None) -> Optional[Dict[str, Any]]:
+        """
+        Récupère les métadonnées de synchronisation.
+
+        Args:
+            sync_type: Type de sync (None = tous)
+
+        Returns:
+            Dict avec métadonnées ou None
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if sync_type:
+                cursor.execute(
+                    "SELECT * FROM sync_metadata WHERE sync_type = ?",
+                    (sync_type,)
+                )
+                row = cursor.fetchone()
+                return dict(row) if row else None
+            else:
+                cursor.execute("SELECT * FROM sync_metadata ORDER BY last_sync_date DESC")
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
 
     # =========================================================================
     # COMPATIBILITÉ LEGACY (pour transition)

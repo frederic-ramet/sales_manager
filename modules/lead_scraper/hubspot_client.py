@@ -330,6 +330,121 @@ class HubSpotClient:
             logger.error(f"Erreur lors de la synchronisation: {e}")
             raise
 
+    def sync_recent_contacts(self, since_days: int = 1, progress_callback=None) -> Dict[str, Any]:
+        """
+        Synchronise uniquement les contacts modifiés récemment.
+
+        Args:
+            since_days: Nombre de jours en arrière (default: 1)
+            progress_callback: Fonction callback(current, total) optionnelle
+
+        Returns:
+            Dict avec résultats de la sync incrémentale
+        """
+        from datetime import datetime, timedelta
+
+        logger.info(f"Début de la synchronisation incrémentale HubSpot (depuis {since_days} jours)...")
+
+        # Calculer timestamp (millisecondes depuis epoch)
+        since_date = datetime.now() - timedelta(days=since_days)
+        since_timestamp = int(since_date.timestamp() * 1000)
+
+        contacts = []
+        properties_to_use = None
+        custom_properties_available = True
+
+        try:
+            # Déterminer quelles propriétés utiliser
+            try:
+                self._handle_rate_limit()
+                test_response = self.client.get(
+                    "/crm/v3/objects/contacts",
+                    params={
+                        "limit": 1,
+                        "properties": ",".join(self.SYNC_PROPERTIES)
+                    }
+                )
+                test_response.raise_for_status()
+                properties_to_use = self.SYNC_PROPERTIES
+                logger.info("Propriétés personnalisées détectées et disponibles")
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in [400, 401]:
+                    logger.warning(
+                        "Propriétés personnalisées non disponibles - "
+                        "utilisation des propriétés standard uniquement"
+                    )
+                    properties_to_use = self.STANDARD_PROPERTIES
+                    custom_properties_available = False
+                else:
+                    raise
+
+            # Recherche avec filtre lastmodifieddate
+            self._handle_rate_limit()
+
+            search_payload = {
+                "filterGroups": [
+                    {
+                        "filters": [
+                            {
+                                "propertyName": "lastmodifieddate",
+                                "operator": "GTE",
+                                "value": str(since_timestamp)
+                            }
+                        ]
+                    }
+                ],
+                "properties": properties_to_use,
+                "limit": 100
+            }
+
+            after = 0
+            page = 0
+
+            while True:
+                search_payload["after"] = after
+
+                self._handle_rate_limit()
+                response = self.client.post(
+                    "/crm/v3/objects/contacts/search",
+                    json=search_payload
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                results = data.get("results", [])
+                for result in results:
+                    contact = self._parse_contact(result)
+                    if contact:
+                        contacts.append(contact)
+
+                page += 1
+                if progress_callback:
+                    progress_callback(len(contacts), "sync_incremental")
+
+                logger.info(f"Page {page}: {len(results)} contacts récupérés (total: {len(contacts)})")
+
+                # Pagination
+                paging = data.get("paging", {})
+                if "next" in paging:
+                    after = paging["next"]["after"]
+                else:
+                    break
+
+            logger.info(f"Synchronisation incrémentale terminée: {len(contacts)} contacts modifiés")
+
+            return {
+                "success": True,
+                "total_contacts": len(contacts),
+                "since_date": since_date.isoformat(),
+                "contacts": contacts,
+                "custom_properties_available": custom_properties_available
+            }
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la synchronisation incrémentale: {e}")
+            raise
+
     def _parse_contact(self, raw_contact: Dict) -> Optional[Dict[str, Any]]:
         """
         Parse un contact brut de l'API HubSpot.

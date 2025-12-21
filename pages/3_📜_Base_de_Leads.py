@@ -436,46 +436,62 @@ with tab2:
     else:
         st.success("✅ HubSpot configuré")
 
+        # Afficher dernière sync
+        last_sync_full = contact_manager.get_sync_metadata('hubspot_full')
+        last_sync_incremental = contact_manager.get_sync_metadata('hubspot_incremental')
+
+        if last_sync_full or last_sync_incremental:
+            st.markdown("**📅 Dernières synchronisations**")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if last_sync_full:
+                    st.caption(f"**Complète** : {last_sync_full['last_sync_date'][:19]} ({last_sync_full['contacts_synced']} contacts)")
+                else:
+                    st.caption("**Complète** : Jamais")
+
+            with col2:
+                if last_sync_incremental:
+                    st.caption(f"**Incrémentale** : {last_sync_incremental['last_sync_date'][:19]} ({last_sync_incremental['contacts_synced']} contacts)")
+                else:
+                    st.caption("**Incrémentale** : Jamais")
+
+        st.divider()
+
         # Options d'import
         col1, col2 = st.columns(2)
 
         with col1:
-            import_type = st.radio(
-                "Type d'import",
-                options=["Contacts", "Entreprises"],
-                horizontal=True
+            sync_mode = st.radio(
+                "Mode de synchronisation",
+                options=["🔄 Sync incrémentale", "💾 Sync complète"],
+                help="Incrémentale : uniquement les contacts modifiés récemment\nComplète : tous les contacts HubSpot"
             )
 
         with col2:
-            import_limit = st.number_input(
-                "Nombre max à importer",
-                min_value=10,
-                max_value=1000,
-                value=100,
-                step=10
-            )
-
-        # Filtres optionnels
-        with st.expander("⚙️ Filtres avancés (optionnel)"):
-            col1, col2 = st.columns(2)
-            with col1:
-                filter_list = st.text_input(
-                    "ID de liste HubSpot",
-                    placeholder="Laisser vide pour tous"
-                )
-            with col2:
-                filter_days = st.number_input(
-                    "Créés dans les X derniers jours",
-                    min_value=0,
+            if sync_mode == "🔄 Sync incrémentale":
+                since_days = st.number_input(
+                    "Modifiés dans les X derniers jours",
+                    min_value=1,
                     max_value=365,
-                    value=0,
-                    help="0 = pas de filtre"
+                    value=7,
+                    help="Récupère uniquement les contacts modifiés dans cet intervalle"
+                )
+            else:
+                import_limit = st.number_input(
+                    "Nombre max à importer",
+                    min_value=10,
+                    max_value=1000,
+                    value=100,
+                    step=10,
+                    help="Pour éviter de surcharger, limitez le nombre de contacts"
                 )
 
         st.divider()
 
         # Bouton import
-        if st.button("🔄 Lancer l'import", type="primary", use_container_width=True):
+        button_label = "⚡ Sync incrémentale" if sync_mode == "🔄 Sync incrémentale" else "🔄 Sync complète"
+        if st.button(button_label, type="primary", use_container_width=True):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -489,44 +505,62 @@ with tab2:
                     if not success:
                         st.error(f"❌ {msg}")
                     else:
-                        status_text.text("📥 Récupération des contacts HubSpot...")
-                        progress_bar.progress(20)
+                        # Choisir le mode de sync
+                        is_incremental = sync_mode == "🔄 Sync incrémentale"
 
-                        # Synchroniser depuis HubSpot
-                        def progress_callback(current, phase):
-                            progress_bar.progress(min(20 + int(current / 10), 80))
-                            status_text.text(f"📥 {current} contacts récupérés...")
+                        if is_incremental:
+                            status_text.text(f"⚡ Sync incrémentale ({since_days} jours)...")
+                            progress_bar.progress(20)
 
-                        sync_result = hubspot.sync_contacts(progress_callback=progress_callback)
+                            def progress_callback(current, phase):
+                                progress_bar.progress(min(20 + int(current / 10), 80))
+                                status_text.text(f"📥 {current} contacts modifiés récupérés...")
+
+                            sync_result = hubspot.sync_recent_contacts(
+                                since_days=since_days,
+                                progress_callback=progress_callback
+                            )
+                        else:
+                            status_text.text("📥 Sync complète...")
+                            progress_bar.progress(20)
+
+                            def progress_callback(current, phase):
+                                progress_bar.progress(min(20 + int(current / 10), 80))
+                                status_text.text(f"📥 {current} contacts récupérés...")
+
+                            sync_result = hubspot.sync_contacts(progress_callback=progress_callback)
 
                         if sync_result['success']:
                             status_text.text("💾 Import dans la base locale...")
                             progress_bar.progress(85)
 
-                            # Récupérer les contacts du miroir
-                            mirror = hubspot.get_mirror()
-                            hubspot_contacts = mirror.get('contacts', [])
+                            # Récupérer les contacts
+                            if is_incremental:
+                                hubspot_contacts = sync_result.get('contacts', [])
+                            else:
+                                mirror = hubspot.get_mirror()
+                                hubspot_contacts = mirror.get('contacts', [])
 
-                            # Limiter si demandé
-                            if import_limit and import_limit < len(hubspot_contacts):
-                                hubspot_contacts = hubspot_contacts[:import_limit]
+                                # Limiter si demandé
+                                if import_limit and import_limit < len(hubspot_contacts):
+                                    hubspot_contacts = hubspot_contacts[:import_limit]
 
                             # Convertir au format unified_contacts
                             contacts_to_import = []
                             for hc in hubspot_contacts:
                                 contacts_to_import.append({
-                                    'hubspot_contact_id': hc.get('hubspot_id'),
-                                    'company_name': hc.get('denomination'),
+                                    'hubspot_contact_id': hc.get('hubspot_id') or hc.get('id'),
+                                    'company_name': hc.get('denomination') or hc.get('company'),
                                     'email': hc.get('email'),
-                                    'phone': hc.get('telephone'),
-                                    'firstname': hc.get('dirigeant', '').split(' ')[0] if hc.get('dirigeant') else None,
-                                    'lastname': ' '.join(hc.get('dirigeant', '').split(' ')[1:]) if hc.get('dirigeant') else None,
-                                    'job_title': hc.get('fonction'),
+                                    'phone': hc.get('telephone') or hc.get('phone'),
+                                    'firstname': hc.get('dirigeant', '').split(' ')[0] if hc.get('dirigeant') else hc.get('firstname'),
+                                    'lastname': ' '.join(hc.get('dirigeant', '').split(' ')[1:]) if hc.get('dirigeant') else hc.get('lastname'),
+                                    'job_title': hc.get('fonction') or hc.get('jobtitle'),
                                     'siren': hc.get('siren'),
                                     'ape_code': hc.get('code_ape'),
-                                    'city': hc.get('ville'),
-                                    'address': hc.get('adresse'),
-                                    'postal_code': hc.get('code_postal'),
+                                    'city': hc.get('ville') or hc.get('city'),
+                                    'address': hc.get('adresse') or hc.get('address'),
+                                    'postal_code': hc.get('code_postal') or hc.get('zip'),
                                     'synced_to_hubspot': True,
                                     'last_sync_hubspot': datetime.now(),
                                 })
@@ -534,12 +568,21 @@ with tab2:
                             # Importer dans unified_contacts
                             added, updated = contact_manager.import_from_hubspot(contacts_to_import)
 
+                            # Enregistrer métadonnées de sync
+                            sync_type = 'hubspot_incremental' if is_incremental else 'hubspot_full'
+                            contact_manager.update_sync_metadata(
+                                sync_type=sync_type,
+                                contacts_synced=len(hubspot_contacts),
+                                notes=f"Sync depuis {since_days} jours" if is_incremental else None
+                            )
+
                             progress_bar.progress(100)
                             status_text.text("✅ Import terminé!")
 
+                            mode_label = f"incrémentale ({since_days} jours)" if is_incremental else "complète"
                             st.success(f"""
-                            ✅ Import HubSpot terminé !
-                            - **{sync_result['total_contacts']}** contacts dans HubSpot
+                            ✅ Sync HubSpot {mode_label} terminée !
+                            - **{sync_result['total_contacts']}** contacts récupérés
                             - **{added}** nouveaux contacts importés
                             - **{updated}** contacts mis à jour
                             """)
