@@ -1027,13 +1027,38 @@ with tab4:
         st.info("Base de données non initialisée")
 
 
+# Helper function for classification badges
+def render_class_badge(prospect_class):
+    """Retourne un badge coloré pour la classe de prospect."""
+    badges = {'A': '🟢 A', 'B': '🟡 B', 'C': '⚪ C'}
+    return badges.get(prospect_class, '-')
+
+
 # --- TAB Entreprises (nouveau schéma uniquement) ---
 if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
     with tab_entreprises:
         st.subheader("🏢 Liste des entreprises")
 
+        # Stats de classification
+        class_stats = company_manager.get_classification_stats()
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("🟢 Classe A", class_stats.get('by_class', {}).get('A', 0))
+        with col2:
+            st.metric("🟡 Classe B", class_stats.get('by_class', {}).get('B', 0))
+        with col3:
+            st.metric("⚪ Classe C", class_stats.get('by_class', {}).get('C', 0))
+        with col4:
+            st.metric("❓ Non classifiées", class_stats.get('unclassified', 0))
+        with col5:
+            # Entreprises à enrichir
+            to_enrich = company_manager.get_companies_to_enrich(limit=1000)
+            st.metric("💎 À enrichir", len(to_enrich))
+
+        st.divider()
+
         # Filtres entreprises
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
 
         with col1:
             company_search = st.text_input(
@@ -1043,21 +1068,29 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
             )
 
         with col2:
-            # Filtrer par source de création
-            company_source_filter = st.selectbox(
-                "Source",
-                options=["Toutes", "sirene", "hubspot", "getsales", "csv_import"],
-                key="company_source_filter"
+            # Filtrer par classe
+            company_class_filter = st.selectbox(
+                "Classe",
+                options=["Toutes", "A", "B", "C", "Non classifié"],
+                key="company_class_filter"
             )
 
         with col3:
-            company_hubspot_filter = st.selectbox(
-                "Sync HubSpot",
-                options=["Tous", "Synchronisé", "Non synchronisé"],
-                key="company_hubspot_filter"
+            # Filtrer par segment
+            company_segment_filter = st.selectbox(
+                "Segment",
+                options=["Tous", "ICP Principal", "ICP Opportuniste", "Test", "Custom"],
+                key="company_segment_filter"
             )
 
         with col4:
+            company_enriched_filter = st.selectbox(
+                "Enrichissement",
+                options=["Tous", "Enrichi", "Non enrichi"],
+                key="company_enriched_filter"
+            )
+
+        with col5:
             company_limit = st.selectbox(
                 "Résultats",
                 options=[50, 100, 200, 500],
@@ -1081,23 +1114,30 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
             st.session_state.company_search_executed = False
 
         if search_companies_btn or not st.session_state.company_search_executed:
-            # Préparer les filtres
-            source_filter = None if company_source_filter == "Toutes" else company_source_filter
-            hubspot_filter = None
-            if company_hubspot_filter == "Synchronisé":
-                hubspot_filter = True
-            elif company_hubspot_filter == "Non synchronisé":
-                hubspot_filter = False
-
+            # Préparer les filtres - utiliser les nouveaux filtres
             st.session_state.company_search_results = company_manager.search(
                 query=company_search if company_search else None,
-                source=source_filter,
-                synced_hubspot=hubspot_filter,
                 limit=company_limit
             )
             st.session_state.company_search_executed = True
 
         companies = st.session_state.company_search_results
+
+        # Filtrer localement par classe, segment, enrichi
+        if companies:
+            if company_class_filter != "Toutes":
+                if company_class_filter == "Non classifié":
+                    companies = [c for c in companies if not c.get('prospect_class')]
+                else:
+                    companies = [c for c in companies if c.get('prospect_class') == company_class_filter]
+
+            if company_segment_filter != "Tous":
+                companies = [c for c in companies if c.get('segment') == company_segment_filter]
+
+            if company_enriched_filter == "Enrichi":
+                companies = [c for c in companies if c.get('enriched')]
+            elif company_enriched_filter == "Non enrichi":
+                companies = [c for c in companies if not c.get('enriched')]
 
         if companies:
             st.markdown(f"**{len(companies)} entreprises trouvées**")
@@ -1105,10 +1145,14 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
             # Créer DataFrame
             df_companies = pd.DataFrame(companies)
 
-            # Colonnes à afficher
+            # Ajouter colonne badge classe
+            if 'prospect_class' in df_companies.columns:
+                df_companies['Classe'] = df_companies['prospect_class'].apply(render_class_badge)
+
+            # Colonnes à afficher - avec Classe et Segment
             display_cols = [
-                'company_name', 'siren', 'website', 'city', 'ape_code',
-                'employee_range', 'total_contacts', 'hubspot_company_id', 'created_at'
+                'Classe', 'company_name', 'siren', 'segment', 'city', 'ape_code',
+                'employee_range', 'total_contacts', 'created_at'
             ]
             display_cols = [col for col in display_cols if col in df_companies.columns]
 
@@ -1128,18 +1172,18 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
                 column_config={
                     "Sélectionner": st.column_config.CheckboxColumn(
                         "✓",
-                        help="Sélectionner pour voir les contacts",
+                        help="Sélectionner pour actions",
                         default=False,
                         width="small"
                     ),
+                    "Classe": st.column_config.TextColumn("Classe", width="small"),
                     "company_name": st.column_config.TextColumn("Entreprise", width="medium"),
                     "siren": st.column_config.TextColumn("SIREN", width="small"),
-                    "website": st.column_config.LinkColumn("Site", width="small", display_text="🌐"),
+                    "segment": st.column_config.TextColumn("Segment", width="small"),
                     "city": st.column_config.TextColumn("Ville", width="small"),
                     "ape_code": st.column_config.TextColumn("APE", width="small"),
                     "employee_range": st.column_config.TextColumn("Effectif", width="small"),
                     "total_contacts": st.column_config.NumberColumn("Contacts", width="small"),
-                    "hubspot_company_id": st.column_config.TextColumn("HubSpot ID", width="small"),
                     "created_at": st.column_config.TextColumn("Date", width="small"),
                 },
                 disabled=display_cols
@@ -1157,11 +1201,29 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
                 # Afficher les contacts de la première entreprise sélectionnée
                 if selected_ids:
                     first_company_id = selected_ids[0]
-                    first_company_name = df_companies.loc[df_companies['id'] == first_company_id, 'company_name'].iloc[0]
+                    first_company = df_companies.loc[df_companies['id'] == first_company_id].iloc[0]
+                    first_company_name = first_company.get('company_name', 'N/A')
 
                     st.divider()
-                    st.subheader(f"👤 Contacts de: {first_company_name}")
 
+                    # Détails de l'entreprise sélectionnée
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.subheader(f"📋 {first_company_name}")
+                        st.caption(f"SIREN: {first_company.get('siren', 'N/A')} | APE: {first_company.get('ape_code', 'N/A')} | {first_company.get('city', 'N/A')}")
+
+                    with col2:
+                        # Badge classification
+                        cls = first_company.get('prospect_class')
+                        if cls:
+                            badge = render_class_badge(cls)
+                            points = first_company.get('prospect_class_points', 0)
+                            st.metric("Classification", f"{badge} ({points} pts)")
+                        else:
+                            st.metric("Classification", "Non classifié")
+
+                    # Contacts de l'entreprise
+                    st.markdown("**👤 Contacts:**")
                     company_contacts = contact_manager.get_contacts_by_company(first_company_id, limit=50)
 
                     if company_contacts:
@@ -1189,11 +1251,51 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
                 st.divider()
 
                 # Actions batch
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
 
                 with col1:
+                    pappers_key = os.getenv('PAPPERS_API_KEY')
+                    if st.button("💎 Enrichir Pappers", use_container_width=True, disabled=not pappers_key, key="enrich_companies_pappers"):
+                        if not pappers_key:
+                            st.error("❌ PAPPERS_API_KEY non configurée")
+                        elif selected_ids:
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+
+                            def update_progress(current, total):
+                                progress_bar.progress(int(current / total * 100))
+                                status_text.text(f"Enrichissement {current}/{total}...")
+
+                            with st.spinner("Enrichissement Pappers en cours..."):
+                                try:
+                                    result = company_manager.enrich_batch(
+                                        selected_ids,
+                                        progress_callback=update_progress
+                                    )
+
+                                    progress_bar.progress(100)
+                                    status_text.empty()
+
+                                    st.success(f"""
+                                    ✅ **Enrichissement terminé !**
+                                    - **{result['enriched']}** entreprise(s) enrichie(s)
+                                    - **{result['contacts_created']}** contact(s) créé(s)
+                                    - 🟢 A: {result['by_class']['A']} | 🟡 B: {result['by_class']['B']} | ⚪ C: {result['by_class']['C']}
+                                    """)
+
+                                    if result['errors']:
+                                        with st.expander(f"⚠️ {len(result['errors'])} erreur(s)"):
+                                            for err in result['errors'][:10]:
+                                                st.text(f"ID {err['company_id']}: {err['error']}")
+
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Erreur: {e}")
+                                    progress_bar.empty()
+
+                with col2:
                     hubspot_key = os.getenv('HUBSPOT_API_KEY')
-                    if st.button("⬆️ Sync vers HubSpot", use_container_width=True, disabled=not hubspot_key, key="sync_companies_hs"):
+                    if st.button("⬆️ Sync HubSpot", use_container_width=True, disabled=not hubspot_key, key="sync_companies_hs"):
                         if not hubspot_key:
                             st.error("❌ HUBSPOT_API_KEY non configurée")
                         elif selected_ids:
@@ -1213,8 +1315,8 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
                                 except Exception as e:
                                     st.error(f"❌ Erreur: {e}")
 
-                with col2:
-                    if st.button("🔗 Fusionner entreprises", use_container_width=True, disabled=(selected_count < 2), key="merge_companies"):
+                with col3:
+                    if st.button("🔗 Fusionner", use_container_width=True, disabled=(selected_count < 2), key="merge_companies"):
                         if selected_count >= 2:
                             st.info("Fusion: garder la première entreprise, fusionner les autres")
                             if st.session_state.get('confirm_merge_companies'):

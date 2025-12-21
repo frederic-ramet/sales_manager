@@ -1190,3 +1190,267 @@ class CompanyManager:
                 LIMIT ?
             """, (f'%"{tag}"%', limit))
             return [dict(row) for row in cursor.fetchall()]
+
+    # =========================================================================
+    # ENRICHISSEMENT PAPPERS (SIREN v2 - Phase 4)
+    # =========================================================================
+
+    def enrich_with_pappers(self, company_id: int, pappers_client=None) -> Dict[str, Any]:
+        """
+        Enrichit une entreprise avec les données Pappers.
+
+        Cette méthode:
+        1. Récupère les données Pappers (dirigeants, CA, téléphone, email)
+        2. Met à jour l'entreprise avec les nouvelles données
+        3. Crée des contacts pour chaque dirigeant trouvé
+        4. Re-classifie l'entreprise avec les nouvelles données
+
+        Args:
+            company_id: ID de l'entreprise à enrichir
+            pappers_client: Instance PappersClient (optionnel, créé si non fourni)
+
+        Returns:
+            Dict avec résultats:
+            - success: bool
+            - company_updated: bool
+            - contacts_created: int
+            - new_classification: str (A/B/C)
+            - data: dict des données Pappers récupérées
+        """
+        from .pappers_client import PappersClient
+        from .contact_manager import ContactManager
+
+        result = {
+            'success': False,
+            'company_updated': False,
+            'contacts_created': 0,
+            'new_classification': None,
+            'data': {},
+            'error': None
+        }
+
+        # Récupérer l'entreprise
+        company = self.get_company(company_id)
+        if not company:
+            result['error'] = f"Entreprise {company_id} non trouvée"
+            return result
+
+        siren = company.get('siren')
+        if not siren:
+            result['error'] = "Entreprise sans SIREN, impossible d'enrichir"
+            return result
+
+        # Appeler Pappers
+        close_client = False
+        if pappers_client is None:
+            pappers_client = PappersClient()
+            close_client = True
+
+        try:
+            pappers_data = pappers_client.get_company(siren)
+            if not pappers_data:
+                result['error'] = f"Aucune donnée Pappers pour SIREN {siren}"
+                return result
+
+            # Extraire les informations de contact
+            contact_info = pappers_client.extract_contact_info(pappers_data)
+            result['data'] = contact_info
+
+            # Mettre à jour l'entreprise
+            update_data = {}
+
+            # Email et téléphone
+            if contact_info.get('email') and not company.get('email'):
+                update_data['email'] = contact_info['email']
+            if contact_info.get('telephone') and not company.get('phone'):
+                update_data['phone'] = contact_info['telephone']
+            if contact_info.get('site_web') and not company.get('website'):
+                update_data['website'] = contact_info['site_web']
+
+            # Chiffre d'affaires
+            if contact_info.get('chiffre_affaires'):
+                try:
+                    ca = float(contact_info['chiffre_affaires'])
+                    update_data['revenue_range'] = f"{ca:,.0f}€"
+                except (ValueError, TypeError):
+                    pass
+
+            # Effectif précis depuis Pappers
+            effectif = pappers_data.get('effectif')
+            if effectif and not company.get('employee_range'):
+                update_data['employee_range'] = str(effectif)
+
+            # Marquer comme enrichi
+            update_data['enriched'] = True
+            update_data['enriched_at'] = datetime.now()
+            update_data['enrichment_source'] = 'pappers'
+            update_data['enrichment_quality'] = 'high' if contact_info.get('email') else 'medium'
+
+            if update_data:
+                self.update_company(company_id, update_data)
+                result['company_updated'] = True
+
+            # Créer des contacts pour les dirigeants
+            representants = pappers_data.get('representants', [])
+            contact_manager = ContactManager()
+
+            for rep in representants:
+                # Ignorer les personnes morales
+                if rep.get('personne_morale', True):
+                    continue
+
+                nom = rep.get('nom', '')
+                prenom = rep.get('prenom', '')
+                fonction = rep.get('qualite', '')
+
+                if not nom:
+                    continue
+
+                # Vérifier si le contact existe déjà pour cette entreprise
+                existing_contacts = contact_manager.get_contacts_by_company(company_id, limit=100)
+                contact_exists = any(
+                    c.get('lastname', '').lower() == nom.lower() and
+                    c.get('firstname', '').lower() == prenom.lower()
+                    for c in existing_contacts
+                )
+
+                if not contact_exists:
+                    contact_data = {
+                        'firstname': prenom,
+                        'lastname': nom,
+                        'job_title': fonction,
+                        'email': contact_info.get('email') if result['contacts_created'] == 0 else None,
+                        'phone': contact_info.get('telephone') if result['contacts_created'] == 0 else None,
+                    }
+                    # Filtrer les None
+                    contact_data = {k: v for k, v in contact_data.items() if v}
+
+                    if contact_data:
+                        contact_manager.add_contact_with_company(
+                            data=contact_data,
+                            source='pappers',
+                            company_id=company_id
+                        )
+                        result['contacts_created'] += 1
+
+            # Re-classifier l'entreprise avec les nouvelles données
+            classification_result = self.classify_company(company_id)
+            result['new_classification'] = classification_result.get('prospect_class')
+
+            result['success'] = True
+
+        except Exception as e:
+            result['error'] = str(e)
+        finally:
+            if close_client:
+                pappers_client.close()
+
+        return result
+
+    def enrich_batch(
+        self,
+        company_ids: List[int],
+        progress_callback=None
+    ) -> Dict[str, Any]:
+        """
+        Enrichit plusieurs entreprises avec Pappers.
+
+        Args:
+            company_ids: Liste des IDs d'entreprises
+            progress_callback: Fonction callback(current, total)
+
+        Returns:
+            Dict avec statistiques d'enrichissement
+        """
+        from .pappers_client import PappersClient
+
+        stats = {
+            'total': len(company_ids),
+            'enriched': 0,
+            'contacts_created': 0,
+            'errors': [],
+            'by_class': {'A': 0, 'B': 0, 'C': 0}
+        }
+
+        if not company_ids:
+            return stats
+
+        with PappersClient() as pappers:
+            for i, company_id in enumerate(company_ids):
+                if progress_callback:
+                    progress_callback(i + 1, len(company_ids))
+
+                result = self.enrich_with_pappers(company_id, pappers_client=pappers)
+
+                if result['success']:
+                    stats['enriched'] += 1
+                    stats['contacts_created'] += result['contacts_created']
+                    if result['new_classification']:
+                        stats['by_class'][result['new_classification']] += 1
+                else:
+                    stats['errors'].append({
+                        'company_id': company_id,
+                        'error': result.get('error')
+                    })
+
+        return stats
+
+    def get_companies_to_enrich(
+        self,
+        segment: str = None,
+        prospect_class: str = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère les entreprises candidates à l'enrichissement.
+
+        Priorité:
+        1. Entreprises non enrichies avec SIREN
+        2. Triées par classe (A > B > C)
+        3. Triées par segment si spécifié
+
+        Args:
+            segment: Filtrer par segment
+            prospect_class: Filtrer par classe
+            limit: Nombre max
+
+        Returns:
+            Liste d'entreprises
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            conditions = [
+                "status = 'active'",
+                "siren IS NOT NULL",
+                "(enriched = 0 OR enriched IS NULL)"
+            ]
+            params = []
+
+            if segment:
+                conditions.append("segment = ?")
+                params.append(segment)
+
+            if prospect_class:
+                conditions.append("prospect_class = ?")
+                params.append(prospect_class)
+
+            where_clause = " AND ".join(conditions)
+            params.append(limit)
+
+            cursor.execute(f"""
+                SELECT * FROM companies
+                WHERE {where_clause}
+                ORDER BY
+                    CASE prospect_class
+                        WHEN 'A' THEN 1
+                        WHEN 'B' THEN 2
+                        WHEN 'C' THEN 3
+                        ELSE 4
+                    END,
+                    created_at DESC
+                LIMIT ?
+            """, params)
+
+            return [dict(row) for row in cursor.fetchall()]
