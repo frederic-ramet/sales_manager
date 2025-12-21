@@ -9,12 +9,12 @@ from .getsales_client import GetSalesClient
 from .models import GetSalesDB, PendingLead, LeadInteraction
 from .deduplication import DeduplicationService
 
-# Import ContactManager pour déduplication locale
+# Import DeduplicationMatcher pour déduplication locale
 try:
-    from modules.lead_scraper import ContactManager
-    CONTACT_MANAGER_AVAILABLE = True
+    from modules.deduplication import DeduplicationMatcher
+    DEDUP_MATCHER_AVAILABLE = True
 except ImportError:
-    CONTACT_MANAGER_AVAILABLE = False
+    DEDUP_MATCHER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,8 @@ class GetSalesSyncService:
         self.db = db
         self.dedup = DeduplicationService(hubspot_client)
 
-        # ContactManager pour déduplication locale
-        self.contact_manager = ContactManager() if CONTACT_MANAGER_AVAILABLE else None
+        # DeduplicationMatcher pour déduplication locale (unified_contacts)
+        self.local_matcher = DeduplicationMatcher() if DEDUP_MATCHER_AVAILABLE else None
 
     def sync_leads(
         self,
@@ -134,7 +134,7 @@ class GetSalesSyncService:
 
                 # Détecter doublons locaux (unified_contacts)
                 local_matches = []
-                if self.contact_manager:
+                if self.local_matcher:
                     local_matches = self._find_local_duplicates(lead)
                     # Si pas de doublons HubSpot mais doublons locaux, marquer comme potential
                     if local_matches and duplicate_status == 'none':
@@ -451,13 +451,15 @@ class GetSalesSyncService:
         """
         Trouve les doublons dans la base locale unified_contacts.
 
+        Utilise DeduplicationMatcher avec fuzzy matching.
+
         Args:
             lead: Données du lead GetSales
 
         Returns:
-            Liste de matches avec 'contact', 'match_type', 'confidence'
+            Liste de matches avec 'contact', 'match_type', 'confidence', 'similarity_score'
         """
-        if not self.contact_manager:
+        if not self.local_matcher:
             return []
 
         # Extraire les champs pour la recherche
@@ -471,33 +473,19 @@ class GetSalesSyncService:
         last_name = lead.get('last_name')
         getsales_uuid = lead.get('uuid')
 
-        # Appeler find_all_duplicates
-        matches = self.contact_manager.find_all_duplicates(
+        # Appeler DeduplicationMatcher.find_matches()
+        matches = self.local_matcher.find_matches(
             email=email,
             linkedin_url=linkedin_url,
             company_name=company_name,
             firstname=first_name,
             lastname=last_name,
-            getsales_uuid=getsales_uuid
+            getsales_uuid=getsales_uuid,
+            include_low_confidence=True
         )
 
-        # Simplifier les résultats pour le stockage JSON
-        simplified = []
-        for match in matches:
-            contact = match['contact']
-            simplified.append({
-                'uuid': contact.get('uuid'),
-                'company_name': contact.get('company_name'),
-                'firstname': contact.get('firstname'),
-                'lastname': contact.get('lastname'),
-                'email': contact.get('email'),
-                'linkedin_url': contact.get('linkedin_url'),
-                'source': contact.get('source'),
-                'match_type': match['match_type'],
-                'confidence': match['confidence']
-            })
-
-        return simplified
+        # Convertir MatchResult en dict pour stockage JSON
+        return [match.to_dict() for match in matches]
 
     def get_sync_status(self) -> Dict[str, Any]:
         """
