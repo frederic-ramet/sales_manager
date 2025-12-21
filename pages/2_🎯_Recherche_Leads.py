@@ -20,6 +20,13 @@ from modules.lead_scraper import (
     ContactManager,
     HubSpotClient
 )
+
+# Import CompanyManager si nouveau schéma disponible
+try:
+    from modules.lead_scraper import CompanyManager
+    COMPANY_SCHEMA_AVAILABLE = True
+except ImportError:
+    COMPANY_SCHEMA_AVAILABLE = False
 from components import render_top_nav, hide_sidebar, render_footer
 
 # Configuration du logging
@@ -435,8 +442,41 @@ with tab_main:
                         try:
                             contact_manager = ContactManager()
                             campagne_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            added, _ = contact_manager.import_from_sirene(companies, campaign_id=campagne_id)
-                            update_log(f"✅ {added} leads ajoutés")
+
+                            # Nouveau schéma: créer companies + contacts séparément
+                            if COMPANY_SCHEMA_AVAILABLE:
+                                company_manager = CompanyManager()
+                                added_companies = 0
+                                added_contacts = 0
+
+                                for company_data in companies:
+                                    # Créer ou trouver l'entreprise
+                                    company_id, is_new = company_manager.find_or_create_company(company_data)
+                                    if is_new:
+                                        added_companies += 1
+
+                                    # Créer le contact associé (si dirigeant présent)
+                                    if company_data.get('dirigeant_nom') or company_data.get('email'):
+                                        contact_data = {
+                                            'firstname': company_data.get('dirigeant_prenom', ''),
+                                            'lastname': company_data.get('dirigeant_nom', ''),
+                                            'email': company_data.get('email', ''),
+                                            'phone': company_data.get('telephone', ''),
+                                            'job_title': company_data.get('dirigeant_fonction', ''),
+                                            'campaign_id': campagne_id,
+                                        }
+                                        contact_manager.add_contact_with_company(
+                                            data=contact_data,
+                                            source='sirene',
+                                            company_id=company_id
+                                        )
+                                        added_contacts += 1
+
+                                update_log(f"✅ {added_companies} entreprises, {added_contacts} contacts ajoutés")
+                            else:
+                                # Ancien schéma: unified_contacts
+                                added, _ = contact_manager.import_from_sirene(companies, campaign_id=campagne_id)
+                                update_log(f"✅ {added} leads ajoutés")
                         except Exception as e:
                             update_log(f"⚠️ Erreur enregistrement: {e}")
 

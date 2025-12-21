@@ -11,6 +11,13 @@ from modules.lead_scraper import ContactManager, HubSpotClient, PappersClient, C
 from modules.deduplication import DeduplicationMatcher
 from components import render_top_nav, hide_sidebar, render_footer
 
+# Import CompanyManager si nouveau schéma disponible
+try:
+    from modules.lead_scraper import CompanyManager
+    COMPANY_SCHEMA_AVAILABLE = True
+except ImportError:
+    COMPANY_SCHEMA_AVAILABLE = False
+
 
 def load_referentiel(filepath: str):
     """Charge un fichier référentiel JSON."""
@@ -52,40 +59,84 @@ contact_manager = ContactManager()
 stats = contact_manager.get_stats()
 filter_options = contact_manager.get_filter_options()
 
+# Initialiser le gestionnaire d'entreprises si disponible
+company_manager = None
+company_stats = {}
+if COMPANY_SCHEMA_AVAILABLE:
+    company_manager = CompanyManager()
+    company_stats = company_manager.get_stats()
+
 # Stats globales avec sources
 st.subheader("📈 Vue d'ensemble")
 
-col1, col2, col3, col4, col5 = st.columns(5)
+if COMPANY_SCHEMA_AVAILABLE:
+    # Nouveau schéma: afficher entreprises + contacts
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
-with col1:
-    st.metric("Total leads", stats['total_leads'])
+    with col1:
+        st.metric("🏢 Entreprises", company_stats.get('total_companies', 0))
 
-with col2:
-    sirene_count = stats.get('by_source', {}).get('sirene', 0)
-    st.metric("🔍 SIRENE", sirene_count)
+    with col2:
+        st.metric("👤 Contacts", stats['total_leads'])
 
-with col3:
-    hubspot_count = stats.get('by_source', {}).get('hubspot', 0)
-    st.metric("🟠 HubSpot", hubspot_count)
+    with col3:
+        sirene_count = stats.get('by_source', {}).get('sirene', 0)
+        st.metric("🔍 SIRENE", sirene_count)
 
-with col4:
-    getsales_count = stats.get('by_source', {}).get('getsales', 0)
-    st.metric("💼 GetSales", getsales_count)
+    with col4:
+        hubspot_count = stats.get('by_source', {}).get('hubspot', 0)
+        st.metric("🟠 HubSpot", hubspot_count)
 
-with col5:
-    enriched_count = stats.get('enriched_count', 0)
-    st.metric("✨ Enrichis", enriched_count)
+    with col5:
+        getsales_count = stats.get('by_source', {}).get('getsales', 0)
+        st.metric("💼 GetSales", getsales_count)
+
+    with col6:
+        enriched_count = stats.get('enriched_count', 0)
+        st.metric("✨ Enrichis", enriched_count)
+else:
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    with col1:
+        st.metric("Total leads", stats['total_leads'])
+
+    with col2:
+        sirene_count = stats.get('by_source', {}).get('sirene', 0)
+        st.metric("🔍 SIRENE", sirene_count)
+
+    with col3:
+        hubspot_count = stats.get('by_source', {}).get('hubspot', 0)
+        st.metric("🟠 HubSpot", hubspot_count)
+
+    with col4:
+        getsales_count = stats.get('by_source', {}).get('getsales', 0)
+        st.metric("💼 GetSales", getsales_count)
+
+    with col5:
+        enriched_count = stats.get('enriched_count', 0)
+        st.metric("✨ Enrichis", enriched_count)
 
 st.divider()
 
-# Onglets principaux
-tab1, tab2, tab3, tab4, tab_doc = st.tabs([
-    "📋 Tous les leads",
-    "⬇️ Import HubSpot",
-    "📤 Import CSV",
-    "🧹 Gestion",
-    "📖 Documentation"
-])
+# Onglets principaux - dynamique selon le schéma
+if COMPANY_SCHEMA_AVAILABLE:
+    tab_entreprises, tab1, tab2, tab3, tab4, tab_doc = st.tabs([
+        "🏢 Entreprises",
+        "👤 Contacts",
+        "⬇️ Import HubSpot",
+        "📤 Import CSV",
+        "🧹 Gestion",
+        "📖 Documentation"
+    ])
+else:
+    tab1, tab2, tab3, tab4, tab_doc = st.tabs([
+        "📋 Tous les leads",
+        "⬇️ Import HubSpot",
+        "📤 Import CSV",
+        "🧹 Gestion",
+        "📖 Documentation"
+    ])
+    tab_entreprises = None
 
 # --- TAB 1: Tous les leads ---
 with tab1:
@@ -964,6 +1015,227 @@ with tab4:
         st.code(f"Base: {db_path}\nTaille: {os.path.getsize(db_path) / 1024:.2f} KB\nContacts: {stats['total_contacts']}")
     else:
         st.info("Base de données non initialisée")
+
+
+# --- TAB Entreprises (nouveau schéma uniquement) ---
+if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
+    with tab_entreprises:
+        st.subheader("🏢 Liste des entreprises")
+
+        # Filtres entreprises
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            company_search = st.text_input(
+                "🔍 Rechercher",
+                placeholder="Nom, SIREN, domaine...",
+                key="company_search"
+            )
+
+        with col2:
+            # Filtrer par source de création
+            company_source_filter = st.selectbox(
+                "Source",
+                options=["Toutes", "sirene", "hubspot", "getsales", "csv_import"],
+                key="company_source_filter"
+            )
+
+        with col3:
+            company_hubspot_filter = st.selectbox(
+                "Sync HubSpot",
+                options=["Tous", "Synchronisé", "Non synchronisé"],
+                key="company_hubspot_filter"
+            )
+
+        with col4:
+            company_limit = st.selectbox(
+                "Résultats",
+                options=[50, 100, 200, 500],
+                index=1,
+                key="company_limit"
+            )
+
+        # Bouton recherche
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            search_companies_btn = st.button(
+                "🔍 Rechercher entreprises",
+                type="primary",
+                use_container_width=True,
+                key="search_companies_btn"
+            )
+
+        # Recherche des entreprises
+        if 'company_search_results' not in st.session_state:
+            st.session_state.company_search_results = None
+            st.session_state.company_search_executed = False
+
+        if search_companies_btn or not st.session_state.company_search_executed:
+            # Préparer les filtres
+            source_filter = None if company_source_filter == "Toutes" else company_source_filter
+            hubspot_filter = None
+            if company_hubspot_filter == "Synchronisé":
+                hubspot_filter = True
+            elif company_hubspot_filter == "Non synchronisé":
+                hubspot_filter = False
+
+            st.session_state.company_search_results = company_manager.search(
+                query=company_search if company_search else None,
+                source=source_filter,
+                synced_hubspot=hubspot_filter,
+                limit=company_limit
+            )
+            st.session_state.company_search_executed = True
+
+        companies = st.session_state.company_search_results
+
+        if companies:
+            st.markdown(f"**{len(companies)} entreprises trouvées**")
+
+            # Créer DataFrame
+            df_companies = pd.DataFrame(companies)
+
+            # Colonnes à afficher
+            display_cols = [
+                'company_name', 'siren', 'website', 'city', 'ape_code',
+                'employee_range', 'total_contacts', 'hubspot_company_id', 'created_at'
+            ]
+            display_cols = [col for col in display_cols if col in df_companies.columns]
+
+            # Formater la date
+            if 'created_at' in df_companies.columns:
+                df_companies['created_at'] = pd.to_datetime(df_companies['created_at']).dt.strftime('%Y-%m-%d')
+
+            # Ajouter checkbox selection
+            df_display = df_companies[display_cols].copy()
+            df_display.insert(0, 'Sélectionner', False)
+
+            edited_df = st.data_editor(
+                df_display,
+                use_container_width=True,
+                hide_index=True,
+                height=500,
+                column_config={
+                    "Sélectionner": st.column_config.CheckboxColumn(
+                        "✓",
+                        help="Sélectionner pour voir les contacts",
+                        default=False,
+                        width="small"
+                    ),
+                    "company_name": st.column_config.TextColumn("Entreprise", width="medium"),
+                    "siren": st.column_config.TextColumn("SIREN", width="small"),
+                    "website": st.column_config.LinkColumn("Site", width="small", display_text="🌐"),
+                    "city": st.column_config.TextColumn("Ville", width="small"),
+                    "ape_code": st.column_config.TextColumn("APE", width="small"),
+                    "employee_range": st.column_config.TextColumn("Effectif", width="small"),
+                    "total_contacts": st.column_config.NumberColumn("Contacts", width="small"),
+                    "hubspot_company_id": st.column_config.TextColumn("HubSpot ID", width="small"),
+                    "created_at": st.column_config.TextColumn("Date", width="small"),
+                },
+                disabled=display_cols
+            )
+
+            # Actions sur sélection
+            selected_count = edited_df['Sélectionner'].sum()
+
+            if selected_count > 0:
+                selected_mask = edited_df['Sélectionner']
+                selected_ids = df_companies.loc[selected_mask, 'id'].tolist() if 'id' in df_companies.columns else []
+
+                st.info(f"**{selected_count}** entreprise(s) sélectionnée(s)")
+
+                # Afficher les contacts de la première entreprise sélectionnée
+                if selected_ids:
+                    first_company_id = selected_ids[0]
+                    first_company_name = df_companies.loc[df_companies['id'] == first_company_id, 'company_name'].iloc[0]
+
+                    st.divider()
+                    st.subheader(f"👤 Contacts de: {first_company_name}")
+
+                    company_contacts = contact_manager.get_contacts_by_company(first_company_id, limit=50)
+
+                    if company_contacts:
+                        df_contacts = pd.DataFrame(company_contacts)
+                        contact_cols = ['firstname', 'lastname', 'email', 'phone', 'job_title', 'linkedin_url', 'source']
+                        contact_cols = [col for col in contact_cols if col in df_contacts.columns]
+
+                        st.dataframe(
+                            df_contacts[contact_cols],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "firstname": st.column_config.TextColumn("Prénom", width="small"),
+                                "lastname": st.column_config.TextColumn("Nom", width="small"),
+                                "email": st.column_config.TextColumn("Email", width="medium"),
+                                "phone": st.column_config.TextColumn("Tél", width="small"),
+                                "job_title": st.column_config.TextColumn("Fonction", width="small"),
+                                "linkedin_url": st.column_config.LinkColumn("LinkedIn", width="small", display_text="🔗"),
+                                "source": st.column_config.TextColumn("Source", width="small"),
+                            }
+                        )
+                    else:
+                        st.info("Aucun contact pour cette entreprise")
+
+                st.divider()
+
+                # Actions batch
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    hubspot_key = os.getenv('HUBSPOT_API_KEY')
+                    if st.button("⬆️ Sync vers HubSpot", use_container_width=True, disabled=not hubspot_key, key="sync_companies_hs"):
+                        if not hubspot_key:
+                            st.error("❌ HUBSPOT_API_KEY non configurée")
+                        elif selected_ids:
+                            with st.spinner("Synchronisation des entreprises..."):
+                                try:
+                                    with HubSpotClient() as hubspot:
+                                        synced = 0
+                                        for company_id in selected_ids:
+                                            company = company_manager.get_company(company_id)
+                                            if company:
+                                                hs_id = hubspot.get_or_create_company(company)
+                                                if hs_id:
+                                                    company_manager.mark_synced_hubspot(company_id, hs_id)
+                                                    synced += 1
+                                    st.success(f"✅ {synced} entreprise(s) synchronisée(s)")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Erreur: {e}")
+
+                with col2:
+                    if st.button("🔗 Fusionner entreprises", use_container_width=True, disabled=(selected_count < 2), key="merge_companies"):
+                        if selected_count >= 2:
+                            st.info("Fusion: garder la première entreprise, fusionner les autres")
+                            if st.session_state.get('confirm_merge_companies'):
+                                keep_id = selected_ids[0]
+                                merge_ids = selected_ids[1:]
+                                merged = 0
+                                for merge_id in merge_ids:
+                                    if company_manager.merge_companies(keep_id, merge_id):
+                                        merged += 1
+                                st.success(f"✅ {merged} entreprise(s) fusionnée(s)")
+                                del st.session_state.confirm_merge_companies
+                                st.rerun()
+                            else:
+                                st.session_state.confirm_merge_companies = True
+                                st.warning("⚠️ Cliquez à nouveau pour confirmer")
+
+            # Export entreprises
+            st.divider()
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                csv_companies = df_companies.to_csv(index=False, sep=';').encode('utf-8')
+                st.download_button(
+                    "📥 Exporter CSV",
+                    data=csv_companies,
+                    file_name=f"entreprises_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="export_companies_csv"
+                )
+        else:
+            st.warning("Aucune entreprise trouvée")
 
 
 # --- TAB 4: Documentation ---

@@ -62,6 +62,15 @@ with tab_main:
         DeduplicationService
     )
 
+    # Import CompanyManager si nouveau schéma disponible
+    try:
+        from modules.lead_scraper import CompanyManager
+        COMPANY_SCHEMA_AVAILABLE = True
+        company_manager = CompanyManager()
+    except ImportError:
+        COMPANY_SCHEMA_AVAILABLE = False
+        company_manager = None
+
     # Import HubSpot si disponible
     hubspot_client = None
     if HUBSPOT_API_KEY:
@@ -428,8 +437,87 @@ with tab_main:
                         - 🏢 {contact.get('company', 'N/A')}
                         """)
 
-                # === Entreprises HubSpot ===
+                # === Entreprises locales (nouveau schéma) ===
                 company_name = lead_data.get('company_name', '')
+                if COMPANY_SCHEMA_AVAILABLE and company_name and company_manager:
+                    st.divider()
+
+                    # Rechercher entreprises locales correspondantes
+                    local_company_matches = []
+
+                    # 1. Chercher par domaine si disponible
+                    website = lead_data.get('company_website', '') or lead_data.get('website', '')
+                    if website:
+                        domain_match = company_manager.find_by_website(website)
+                        if domain_match:
+                            local_company_matches.append({
+                                **domain_match,
+                                'match_type': 'domain',
+                                'match_icon': '🟢'
+                            })
+
+                    # 2. Chercher par nom fuzzy
+                    if not local_company_matches:
+                        fuzzy_matches = company_manager.find_by_name_fuzzy(company_name, threshold=0.8)
+                        for fm in fuzzy_matches[:3]:  # Max 3 résultats
+                            local_company_matches.append({
+                                **fm,
+                                'match_type': 'fuzzy_name',
+                                'match_icon': '🟡'
+                            })
+
+                    if local_company_matches:
+                        st.markdown(f"**🗃️ Entreprises Base de Leads** ({len(local_company_matches)})")
+
+                        for i, local_company in enumerate(local_company_matches):
+                            with st.container():
+                                col1, col2, col3 = st.columns([2, 3, 1])
+
+                                with col1:
+                                    st.markdown(f"{local_company.get('match_icon', '⚪')} **{local_company.get('match_type', 'unknown')}**")
+                                    st.caption(f"SIREN: {local_company.get('siren', 'N/A')}")
+
+                                with col2:
+                                    st.write(f"🏢 {local_company.get('company_name', 'N/A')}")
+                                    st.write(f"🌐 {local_company.get('website', 'N/A') or 'Pas de site'}")
+                                    st.caption(f"📍 {local_company.get('city', 'N/A')} | 👥 {local_company.get('total_contacts', 0)} contacts")
+
+                                with col3:
+                                    if lead.validation_status == 'pending':
+                                        local_selected = st.session_state.get(f'selected_local_company_{lead.id}') == local_company.get('id')
+                                        if st.button(
+                                            "✅ Sélectionné" if local_selected else "Utiliser",
+                                            key=f"select_local_company_{lead.id}_{i}",
+                                            use_container_width=True,
+                                            type="primary" if local_selected else "secondary"
+                                        ):
+                                            if local_selected:
+                                                del st.session_state[f'selected_local_company_{lead.id}']
+                                            else:
+                                                st.session_state[f'selected_local_company_{lead.id}'] = local_company.get('id')
+                                                # Désélectionner entreprise HubSpot si une locale est choisie
+                                                if f'selected_company_{lead.id}' in st.session_state:
+                                                    del st.session_state[f'selected_company_{lead.id}']
+                                            st.rerun()
+
+                        # Option créer nouvelle entreprise locale
+                        if lead.validation_status == 'pending':
+                            create_local_new_selected = st.session_state.get(f'selected_local_company_{lead.id}') == 'create_new_local'
+                            if st.button(
+                                "➕ Créer nouvelle entreprise locale" + (" ✅" if create_local_new_selected else ""),
+                                key=f"create_new_local_company_{lead.id}",
+                                use_container_width=True,
+                                type="primary" if create_local_new_selected else "secondary"
+                            ):
+                                if create_local_new_selected:
+                                    del st.session_state[f'selected_local_company_{lead.id}']
+                                else:
+                                    st.session_state[f'selected_local_company_{lead.id}'] = 'create_new_local'
+                                st.rerun()
+                    else:
+                        st.info(f"🗃️ Aucune entreprise '{company_name}' trouvée dans la base locale. Une nouvelle sera créée.")
+
+                # === Entreprises HubSpot ===
                 if company_name:
                     st.divider()
                     if lead.company_matches:
@@ -487,17 +575,30 @@ with tab_main:
                 if lead.validation_status == 'pending' and sync_service:
                     st.divider()
 
-                    # Récupérer le choix de company
+                    # Récupérer les choix de company (HubSpot et local)
                     selected_company = st.session_state.get(f'selected_company_{lead.id}')
+                    selected_local_company = st.session_state.get(f'selected_local_company_{lead.id}')
 
                     col1, col2, col3 = st.columns(3)
 
                     with col1:
                         if st.button("✅ Créer nouveau", key=f"create_{lead.id}", use_container_width=True):
                             try:
-                                # Préparer les données de company
+                                # Préparer les données de company (priorité au local si nouveau schéma)
                                 company_data = None
-                                if selected_company and selected_company != 'create_new':
+
+                                # 1. Entreprise locale sélectionnée (nouveau schéma)
+                                if COMPANY_SCHEMA_AVAILABLE and selected_local_company:
+                                    if selected_local_company == 'create_new_local':
+                                        company_data = {
+                                            'create_new_local_company': True,
+                                            'local_company_data': lead_data  # Utiliser les données GetSales
+                                        }
+                                    else:
+                                        company_data = {'use_existing_local_company_id': selected_local_company}
+
+                                # 2. Entreprise HubSpot sélectionnée
+                                elif selected_company and selected_company != 'create_new':
                                     company_data = {'use_existing_company_id': selected_company}
                                 elif selected_company == 'create_new':
                                     company_data = {'create_new_company': True}
@@ -508,8 +609,9 @@ with tab_main:
                                     merge_data=company_data
                                 )
                                 # Nettoyer la session
-                                if f'selected_company_{lead.id}' in st.session_state:
-                                    del st.session_state[f'selected_company_{lead.id}']
+                                for key in [f'selected_company_{lead.id}', f'selected_local_company_{lead.id}']:
+                                    if key in st.session_state:
+                                        del st.session_state[key]
                                 st.success(result['message'])
                                 st.rerun()
                             except Exception as e:
