@@ -67,7 +67,11 @@ class HubSpotClient:
     CUSTOM_PROPERTIES = [
         "siren", "siret", "code_ape", "effectif", "chiffre_affaires",
         "import_source", "import_notes", "getsales_uuid",
-        "getsales_headline", "getsales_bio"
+        "getsales_headline", "getsales_bio",
+        # Propriétés campagne GetSales
+        "getsales_flow_name", "getsales_flow_uuid",
+        "getsales_first_contact_date", "getsales_last_interaction_date",
+        "getsales_interaction_count", "getsales_has_replied"
     ]
 
     # Définitions des propriétés custom à créer
@@ -151,6 +155,58 @@ class HubSpotClient:
             "fieldType": "textarea",
             "groupName": "contactinformation",
             "description": "Description LinkedIn du contact (via GetSales)"
+        },
+        "getsales_flow_name": {
+            "name": "getsales_flow_name",
+            "label": "Campagne GetSales",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Nom de la campagne/flow GetSales"
+        },
+        "getsales_flow_uuid": {
+            "name": "getsales_flow_uuid",
+            "label": "GetSales Flow UUID",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "UUID du flow GetSales"
+        },
+        "getsales_first_contact_date": {
+            "name": "getsales_first_contact_date",
+            "label": "Premier contact GetSales",
+            "type": "date",
+            "fieldType": "date",
+            "groupName": "contactinformation",
+            "description": "Date du premier message LinkedIn envoyé"
+        },
+        "getsales_last_interaction_date": {
+            "name": "getsales_last_interaction_date",
+            "label": "Dernière interaction GetSales",
+            "type": "date",
+            "fieldType": "date",
+            "groupName": "contactinformation",
+            "description": "Date de la dernière interaction LinkedIn"
+        },
+        "getsales_interaction_count": {
+            "name": "getsales_interaction_count",
+            "label": "Nb interactions GetSales",
+            "type": "number",
+            "fieldType": "number",
+            "groupName": "contactinformation",
+            "description": "Nombre total d'interactions LinkedIn"
+        },
+        "getsales_has_replied": {
+            "name": "getsales_has_replied",
+            "label": "A répondu (GetSales)",
+            "type": "enumeration",
+            "fieldType": "booleancheckbox",
+            "groupName": "contactinformation",
+            "description": "Le contact a répondu aux messages LinkedIn",
+            "options": [
+                {"label": "Oui", "value": "true"},
+                {"label": "Non", "value": "false"}
+            ]
         },
     }
 
@@ -956,6 +1012,73 @@ class HubSpotClient:
             logger.error(f"Erreur association contact-company: {e}")
             return False
 
+    def create_note(
+        self,
+        contact_id: str,
+        body: str,
+        timestamp: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Crée une note associée à un contact dans HubSpot.
+
+        Args:
+            contact_id: ID du contact HubSpot
+            body: Contenu de la note (texte ou HTML)
+            timestamp: Date/heure de la note (ISO format), utilise maintenant si None
+
+        Returns:
+            Note créée avec 'id', ou None si erreur
+        """
+        try:
+            from datetime import datetime
+
+            # Timestamp par défaut = maintenant
+            if not timestamp:
+                timestamp = datetime.now().isoformat()
+
+            # Convertir en milliseconds si c'est une date ISO
+            try:
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                ts_ms = int(dt.timestamp() * 1000)
+            except (ValueError, AttributeError):
+                ts_ms = int(datetime.now().timestamp() * 1000)
+
+            self._handle_rate_limit()
+
+            response = self.client.post(
+                "/crm/v3/objects/notes",
+                json={
+                    "properties": {
+                        "hs_timestamp": str(ts_ms),
+                        "hs_note_body": body
+                    },
+                    "associations": [{
+                        "to": {"id": contact_id},
+                        "types": [{
+                            "associationCategory": "HUBSPOT_DEFINED",
+                            "associationTypeId": 202  # Note to Contact
+                        }]
+                    }]
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            note_id = data.get("id")
+            logger.info(f"Note créée: ID {note_id} pour contact {contact_id}")
+
+            return {
+                "id": note_id,
+                "properties": data.get("properties", {})
+            }
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erreur création note: HTTP {e.response.status_code} - {e.response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Erreur création note: {e}")
+            return None
+
     def get_or_create_company(
         self,
         name: str,
@@ -1169,6 +1292,13 @@ class HubSpotClient:
             'getsales_uuid': ['getsales_uuid'],
             'getsales_headline': ['getsales_headline', 'headline'],
             'getsales_bio': ['getsales_bio', 'about', 'bio'],
+            # Propriétés campagne GetSales
+            'getsales_flow_name': ['getsales_flow_name', 'flow_name'],
+            'getsales_flow_uuid': ['getsales_flow_uuid', 'flow_uuid'],
+            'getsales_first_contact_date': ['getsales_first_contact_date', 'first_contact_date'],
+            'getsales_last_interaction_date': ['getsales_last_interaction_date', 'last_interaction_date'],
+            'getsales_interaction_count': ['getsales_interaction_count', 'interaction_count'],
+            'getsales_has_replied': ['getsales_has_replied', 'has_replied'],
         }
 
         for hubspot_prop, possible_names in EXTENDED_MAPPING.items():

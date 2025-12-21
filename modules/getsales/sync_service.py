@@ -301,6 +301,128 @@ class GetSalesSyncService:
             logger.error(f"Erreur validation lead {pending_lead_id}: {e}")
             raise
 
+    def _extract_campaign_stats(self, getsales_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extrait les statistiques de campagne depuis les messages GetSales.
+
+        Args:
+            getsales_data: Données du lead GetSales avec '_messages'
+
+        Returns:
+            Dict avec flow_name, flow_uuid, first_contact_date, last_interaction_date,
+            interaction_count, has_replied
+        """
+        messages = getsales_data.get('_messages', [])
+
+        stats = {
+            'flow_name': None,
+            'flow_uuid': None,
+            'first_contact_date': None,
+            'last_interaction_date': None,
+            'interaction_count': len(messages),
+            'has_replied': False
+        }
+
+        if not messages:
+            return stats
+
+        # Trier les messages par date
+        sorted_messages = sorted(
+            messages,
+            key=lambda m: m.get('sent_at', '') or ''
+        )
+
+        # Extraire le flow_name du premier message sortant
+        for msg in sorted_messages:
+            if msg.get('flow_name') and not stats['flow_name']:
+                stats['flow_name'] = msg['flow_name']
+            if msg.get('flow_uuid') and not stats['flow_uuid']:
+                stats['flow_uuid'] = msg['flow_uuid']
+            if stats['flow_name'] and stats['flow_uuid']:
+                break
+
+        # Premier contact = premier message sortant
+        for msg in sorted_messages:
+            if msg.get('type') == 'outbox' and msg.get('sent_at'):
+                stats['first_contact_date'] = msg['sent_at'][:10]  # YYYY-MM-DD
+                break
+
+        # Dernière interaction = dernier message (tous types)
+        for msg in reversed(sorted_messages):
+            if msg.get('sent_at'):
+                stats['last_interaction_date'] = msg['sent_at'][:10]  # YYYY-MM-DD
+                break
+
+        # A répondu = au moins un message inbox
+        stats['has_replied'] = any(m.get('type') == 'inbox' for m in messages)
+
+        return stats
+
+    def _build_campaign_note(self, getsales_data: Dict[str, Any], stats: Dict[str, Any]) -> str:
+        """
+        Construit le contenu de la note récapitulative de la campagne.
+
+        Args:
+            getsales_data: Données du lead GetSales
+            stats: Stats extraites via _extract_campaign_stats
+
+        Returns:
+            Contenu de la note (texte formaté)
+        """
+        messages = getsales_data.get('_messages', [])
+
+        lines = [
+            "📧 <b>Prospection LinkedIn via GetSales</b>",
+            "",
+        ]
+
+        # Info campagne
+        if stats['flow_name']:
+            lines.append(f"🎯 <b>Campagne:</b> {stats['flow_name']}")
+        if stats['first_contact_date']:
+            lines.append(f"📅 <b>Premier contact:</b> {stats['first_contact_date']}")
+        lines.append(f"💬 <b>Messages échangés:</b> {stats['interaction_count']}")
+        lines.append(f"✉️ <b>A répondu:</b> {'Oui ✅' if stats['has_replied'] else 'Non'}")
+
+        # Historique des messages
+        if messages:
+            lines.append("")
+            lines.append("─" * 40)
+            lines.append("<b>Historique des messages:</b>")
+            lines.append("")
+
+            sorted_messages = sorted(
+                messages,
+                key=lambda m: m.get('sent_at', '') or ''
+            )
+
+            for msg in sorted_messages:
+                msg_type = msg.get('type', '')
+                sent_at = msg.get('sent_at', '')[:16].replace('T', ' ') if msg.get('sent_at') else 'N/A'
+                text = msg.get('text', '')[:200] if msg.get('text') else ''
+                status = msg.get('status', '')
+
+                if msg_type == 'outbox':
+                    icon = "➡️"
+                    label = "Envoyé"
+                    if status == 'read':
+                        label += " (lu ✓)"
+                elif msg_type == 'inbox':
+                    icon = "⬅️"
+                    label = "Réponse reçue"
+                else:
+                    icon = "•"
+                    label = msg_type
+
+                lines.append(f"<b>[{sent_at}]</b> {icon} {label}")
+                if text:
+                    # Tronquer et échapper le texte
+                    text_preview = text.replace('<', '&lt;').replace('>', '&gt;')
+                    lines.append(f"<i>\"{text_preview}{'...' if len(msg.get('text', '')) > 200 else ''}\"</i>")
+                lines.append("")
+
+        return "<br>".join(lines)
+
     def _create_hubspot_contact(
         self,
         getsales_data: Dict[str, Any],
@@ -319,6 +441,9 @@ class GetSalesSyncService:
         Returns:
             Contact créé avec 'id' et 'company_id' (si associé)
         """
+        # Extraire les stats de campagne
+        campaign_stats = self._extract_campaign_stats(getsales_data)
+
         # Mapper les champs
         contact_data = {}
 
@@ -336,12 +461,26 @@ class GetSalesSyncService:
 
         # Ajouter propriétés custom GetSales
         contact_data['getsales_uuid'] = getsales_data.get('uuid', '')
+        contact_data['import_source'] = 'GetSales'
 
         # Ajouter headline/bio si disponibles
         if getsales_data.get('headline'):
             contact_data['getsales_headline'] = getsales_data['headline'][:500]
         if getsales_data.get('about'):
             contact_data['getsales_bio'] = getsales_data['about'][:2000]
+
+        # Ajouter propriétés de campagne
+        if campaign_stats['flow_name']:
+            contact_data['getsales_flow_name'] = campaign_stats['flow_name']
+        if campaign_stats['flow_uuid']:
+            contact_data['getsales_flow_uuid'] = campaign_stats['flow_uuid']
+        if campaign_stats['first_contact_date']:
+            contact_data['getsales_first_contact_date'] = campaign_stats['first_contact_date']
+        if campaign_stats['last_interaction_date']:
+            contact_data['getsales_last_interaction_date'] = campaign_stats['last_interaction_date']
+        if campaign_stats['interaction_count']:
+            contact_data['getsales_interaction_count'] = str(campaign_stats['interaction_count'])
+        contact_data['getsales_has_replied'] = 'true' if campaign_stats['has_replied'] else 'false'
 
         # 1. Créer le contact (utiliser create_contact pour avoir l'ID)
         contact_result = self.hubspot.create_contact(contact_data)
@@ -483,18 +622,17 @@ class GetSalesSyncService:
         """
         Synchronise les interactions LinkedIn vers HubSpot.
 
+        Crée une note récapitulative avec l'historique des messages.
+
         Args:
             hubspot_contact_id: ID du contact HubSpot
             getsales_lead: Lead avec '_messages'
         """
         messages = getsales_lead.get('_messages', [])
-        if not messages:
-            return
-
         lead_uuid = getsales_lead.get('uuid', '')
 
+        # Stocker les interactions en base locale
         for msg in messages:
-            # Créer l'interaction en base
             interaction = LeadInteraction(
                 getsales_lead_uuid=lead_uuid,
                 hubspot_contact_id=hubspot_contact_id,
@@ -504,15 +642,29 @@ class GetSalesSyncService:
                 flow_name=msg.get('flow_name'),
                 synced_to_hubspot=False
             )
-
             interaction_id = self.db.save_interaction(interaction)
-
-            # Créer la note HubSpot (si supporté par le client)
-            # Note: Le HubSpotClient actuel ne supporte pas les engagements
-            # On marque quand même comme synced pour l'instant
             self.db.mark_interaction_synced(interaction_id)
 
-        logger.info(f"{len(messages)} interactions synchronisées pour {hubspot_contact_id}")
+        # Créer une note récapitulative dans HubSpot
+        campaign_stats = self._extract_campaign_stats(getsales_lead)
+        note_body = self._build_campaign_note(getsales_lead, campaign_stats)
+
+        # Utiliser la date du premier contact comme timestamp de la note
+        first_contact_date = campaign_stats.get('first_contact_date')
+
+        note_result = self.hubspot.create_note(
+            contact_id=hubspot_contact_id,
+            body=note_body,
+            timestamp=first_contact_date
+        )
+
+        if note_result:
+            logger.info(f"Note campagne créée pour contact {hubspot_contact_id}")
+        else:
+            logger.warning(f"Échec création note pour contact {hubspot_contact_id}")
+
+        if messages:
+            logger.info(f"{len(messages)} interactions synchronisées pour {hubspot_contact_id}")
 
     def _get_interaction_type(self, message: Dict[str, Any]) -> str:
         """Détermine le type d'interaction."""
