@@ -535,9 +535,9 @@ class GetSalesSyncService:
         contact_data['import_source'] = 'GetSales_interne'
 
         # Attribution HubSpot - prospection LinkedIn
-        contact_data['hs_analytics_source'] = 'PAID_SOCIAL'
-        contact_data['hs_analytics_source_data_1'] = 'LINKEDIN'
-        contact_data['hs_analytics_source_data_2'] = 'GetSales_interne'
+        contact_data['hs_analytics_source'] = 'OTHER_CAMPAIGNS'
+        contact_data['hs_analytics_source_data_1'] = 'GetSales_interne'
+        contact_data['hs_analytics_source_data_2'] = 'LinkedIn'
 
         # Ajouter headline/bio si disponibles
         if getsales_data.get('headline'):
