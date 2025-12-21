@@ -426,18 +426,24 @@ class GetSalesSyncService:
         Returns:
             Contenu de la note (texte formaté)
         """
+        from datetime import datetime
         messages = getsales_data.get('_messages', [])
 
         lines = [
             "📧 <b>Prospection LinkedIn via GetSales</b>",
+            f"<i>Sync: {datetime.now().strftime('%Y-%m-%d %H:%M')}</i>",
             "",
         ]
 
         # Info campagne
         if stats['flow_name']:
             lines.append(f"🎯 <b>Campagne:</b> {stats['flow_name']}")
+        if stats['flow_uuid'] and not stats['flow_name']:
+            lines.append(f"🎯 <b>Flow UUID:</b> {stats['flow_uuid']}")
         if stats['first_contact_date']:
             lines.append(f"📅 <b>Premier contact:</b> {stats['first_contact_date']}")
+        if stats['last_interaction_date']:
+            lines.append(f"📅 <b>Dernière interaction:</b> {stats['last_interaction_date']}")
         lines.append(f"💬 <b>Messages échangés:</b> {stats['interaction_count']}")
         lines.append(f"✉️ <b>A répondu:</b> {'Oui ✅' if stats['has_replied'] else 'Non'}")
 
