@@ -19,6 +19,7 @@ from .query_parser import QueryParser
 from .lookalike import LookalikeEngine
 from .scoring import LeadScorer
 from .exporter import Exporter
+from .csv_importer import CSVImporter, ImportResult
 
 # Alias pour compatibilité avec code existant
 LeadTracker = ContactManager
@@ -34,4 +35,6 @@ __all__ = [
     'LookalikeEngine',
     'LeadScorer',
     'Exporter',
+    'CSVImporter',
+    'ImportResult',
 ]

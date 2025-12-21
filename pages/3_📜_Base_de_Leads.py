@@ -6,7 +6,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-from modules.lead_scraper import ContactManager, HubSpotClient, PappersClient
+from modules.lead_scraper import ContactManager, HubSpotClient, PappersClient, CSVImporter
+from modules.deduplication import DeduplicationMatcher
 from components import render_top_nav, hide_sidebar
 
 # Navigation
@@ -58,9 +59,10 @@ with col5:
 st.divider()
 
 # Onglets principaux
-tab1, tab2, tab3, tab_doc = st.tabs([
+tab1, tab2, tab3, tab4, tab_doc = st.tabs([
     "📋 Tous les leads",
     "⬇️ Import HubSpot",
+    "📤 Import CSV",
     "🧹 Gestion",
     "📖 Documentation"
 ])
@@ -427,8 +429,225 @@ with tab2:
             st.metric("Synchronisés vers HubSpot", hubspot_synced)
 
 
-# --- TAB 3: Gestion ---
+# --- TAB 3: Import CSV ---
 with tab3:
+    st.subheader("📤 Import de fichiers CSV")
+    st.markdown("Importez des contacts depuis un fichier CSV (listes achetées, exports, etc.)")
+
+    # File uploader
+    uploaded_file = st.file_uploader(
+        "Glissez votre fichier CSV ici",
+        type=['csv'],
+        help="Format: UTF-8 ou Latin-1, séparateur virgule ou point-virgule"
+    )
+
+    if uploaded_file:
+        # Initialiser l'importeur
+        importer = CSVImporter(uploaded_file.getvalue(), uploaded_file.name)
+
+        # Parser le fichier
+        try:
+            df = importer.parse()
+            stats_csv = importer.get_stats()
+
+            st.success(f"✅ Fichier lu: **{stats_csv['rows']} lignes**, {stats_csv['columns']} colonnes")
+            st.caption(f"Encodage: {stats_csv['encoding']} | Séparateur: {stats_csv['separator']}")
+
+            # Mapping automatique
+            auto_mapping = importer.auto_map_columns()
+
+            st.divider()
+            st.subheader("🔗 Mapping des colonnes")
+            st.caption("Associez les colonnes du CSV aux champs de la base")
+
+            # Interface de mapping en 3 colonnes
+            csv_columns = ['(ignorer)'] + list(df.columns)
+            mapping = {}
+
+            # Grouper les champs par catégorie
+            field_groups = {
+                'Entreprise': ['company_name', 'siren', 'ape_code', 'employee_range', 'revenue_range'],
+                'Contact': ['firstname', 'lastname', 'email', 'phone', 'job_title', 'linkedin_url'],
+                'Adresse': ['address', 'postal_code', 'city', 'region', 'country', 'website'],
+                'Autre': ['notes', 'source_file']
+            }
+
+            for group_name, fields in field_groups.items():
+                with st.expander(f"**{group_name}**", expanded=(group_name in ['Entreprise', 'Contact'])):
+                    cols = st.columns(3)
+                    for i, target in enumerate(fields):
+                        if target in CSVImporter.TARGET_COLUMNS:
+                            with cols[i % 3]:
+                                # Trouver l'index par défaut
+                                default_idx = 0
+                                if target in auto_mapping:
+                                    try:
+                                        default_idx = csv_columns.index(auto_mapping[target])
+                                    except ValueError:
+                                        pass
+
+                                # Labels plus lisibles
+                                labels = {
+                                    'company_name': '🏢 Entreprise',
+                                    'siren': '🔢 SIREN',
+                                    'email': '📧 Email',
+                                    'phone': '📞 Téléphone',
+                                    'firstname': '👤 Prénom',
+                                    'lastname': '👤 Nom',
+                                    'job_title': '💼 Fonction',
+                                    'linkedin_url': '🔗 LinkedIn',
+                                    'website': '🌐 Site web',
+                                    'city': '🏙️ Ville',
+                                    'postal_code': '📮 Code postal',
+                                    'address': '📍 Adresse',
+                                    'region': '🗺️ Région',
+                                    'country': '🌍 Pays',
+                                    'ape_code': '🏭 Code APE',
+                                    'employee_range': '👥 Effectif',
+                                    'revenue_range': '💰 CA',
+                                    'notes': '📝 Notes',
+                                    'source_file': '📁 Source fichier'
+                                }
+
+                                selected = st.selectbox(
+                                    labels.get(target, target),
+                                    options=csv_columns,
+                                    index=default_idx,
+                                    key=f"map_{target}"
+                                )
+
+                                if selected != '(ignorer)':
+                                    mapping[target] = selected
+
+            # Stocker le mapping
+            importer.mapping = mapping
+
+            st.divider()
+
+            # Prévisualisation
+            st.subheader("👀 Prévisualisation")
+
+            if mapping:
+                preview = importer.get_preview(10)
+                st.dataframe(preview, use_container_width=True, hide_index=True)
+
+                # Stats
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Lignes totales", stats_csv['rows'])
+                with col2:
+                    st.metric("Colonnes mappées", len(mapping))
+                with col3:
+                    unmapped = importer.get_unmapped_columns()
+                    st.metric("Non mappées", len(unmapped))
+                with col4:
+                    required = ['company_name', 'email']
+                    has_required = any(r in mapping for r in required)
+                    st.metric("Prêt", "✅ Oui" if has_required else "❌ Non")
+
+                # Colonnes non mappées
+                if unmapped:
+                    with st.expander(f"Colonnes ignorées ({len(unmapped)})"):
+                        st.write(", ".join(unmapped))
+            else:
+                st.warning("⚠️ Aucune colonne mappée. Configurez le mapping ci-dessus.")
+
+            st.divider()
+
+            # Validation et import
+            errors = importer.validate()
+
+            if errors:
+                for err in errors:
+                    st.error(f"❌ {err}")
+            else:
+                # Options d'import
+                col1, col2 = st.columns(2)
+                with col1:
+                    skip_dupes = st.checkbox("Ignorer les doublons", value=True)
+                with col2:
+                    source_name = st.text_input("Nom de source", value="csv_import")
+
+                st.divider()
+
+                # Bouton import
+                if st.button("📥 Importer les contacts", type="primary", use_container_width=True):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+
+                    def update_progress(current, total):
+                        progress_bar.progress(int(current / total * 100))
+                        status_text.text(f"Import en cours... {current}/{total}")
+
+                    try:
+                        # Initialiser le matcher pour déduplication
+                        dedup_matcher = DeduplicationMatcher()
+
+                        # Lancer l'import
+                        result = importer.import_to_contacts(
+                            contact_manager=contact_manager,
+                            dedup_matcher=dedup_matcher,
+                            source_name=source_name,
+                            skip_duplicates=skip_dupes,
+                            progress_callback=update_progress
+                        )
+
+                        progress_bar.progress(100)
+                        status_text.empty()
+
+                        # Afficher les résultats
+                        st.success(f"""
+                        ✅ **Import terminé !**
+                        - **{result.imported}** contacts ajoutés
+                        - **{result.duplicates}** doublons détectés
+                        - **{result.skipped}** lignes ignorées (données manquantes)
+                        """)
+
+                        if result.errors:
+                            with st.expander(f"⚠️ {len(result.errors)} erreurs"):
+                                for err in result.errors[:20]:
+                                    st.text(err)
+
+                        if result.duplicate_details:
+                            with st.expander(f"📋 Doublons détectés ({result.duplicates})"):
+                                for dup in result.duplicate_details[:10]:
+                                    input_name = f"{dup['input_data'].get('firstname', '')} {dup['input_data'].get('lastname', '')}".strip()
+                                    match_name = f"{dup['match'].get('firstname', '')} {dup['match'].get('lastname', '')}".strip()
+                                    st.markdown(f"""
+                                    **Ligne {dup['row']}**: {input_name or dup['input_data'].get('company_name', 'N/A')}
+                                    → Match: {match_name or dup['match'].get('company_name', 'N/A')} ({dup['confidence']})
+                                    """)
+
+                        st.balloons()
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors de l'import: {e}")
+                        progress_bar.empty()
+
+        except Exception as e:
+            st.error(f"❌ Erreur lors de la lecture du fichier: {e}")
+
+    else:
+        # Instructions
+        st.info("""
+        **Formats supportés:**
+        - Encodage: UTF-8, Latin-1, Windows-1252
+        - Séparateurs: virgule (,), point-virgule (;), tabulation
+
+        **Colonnes reconnues automatiquement:**
+        - Entreprise, Société, Company → `company_name`
+        - Prénom, First Name → `firstname`
+        - Nom, Last Name → `lastname`
+        - Email, Mail, Courriel → `email`
+        - Téléphone, Phone → `phone`
+        - Fonction, Poste → `job_title`
+        - Et bien d'autres...
+        """)
+
+
+# --- TAB 4: Gestion ---
+with tab4:
     st.subheader("🧹 Gestion de la base")
     st.warning("⚠️ **Attention** : Ces actions sont irréversibles !")
 
