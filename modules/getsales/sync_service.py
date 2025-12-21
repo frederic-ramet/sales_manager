@@ -534,6 +534,11 @@ class GetSalesSyncService:
         contact_data['getsales_uuid'] = getsales_data.get('uuid', '')
         contact_data['import_source'] = 'GetSales_interne'
 
+        # Attribution HubSpot - source hors ligne
+        contact_data['hs_analytics_source'] = 'OFFLINE'
+        contact_data['hs_analytics_source_data_1'] = 'GetSales_interne'
+        contact_data['hs_analytics_source_data_2'] = campaign_stats.get('flow_name', '')
+
         # Ajouter headline/bio si disponibles
         if getsales_data.get('headline'):
             contact_data['getsales_headline'] = getsales_data['headline'][:500]
