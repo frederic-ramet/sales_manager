@@ -16,6 +16,20 @@ try:
 except ImportError:
     DEDUP_MATCHER_AVAILABLE = False
 
+# Import CompanyManager pour gestion des entreprises (Phase 3)
+try:
+    from modules.lead_scraper.company_manager import CompanyManager
+    COMPANY_MANAGER_AVAILABLE = True
+except ImportError:
+    COMPANY_MANAGER_AVAILABLE = False
+
+# Import ContactManager pour gestion des contacts avec company
+try:
+    from modules.lead_scraper.contact_manager import ContactManager
+    CONTACT_MANAGER_AVAILABLE = True
+except ImportError:
+    CONTACT_MANAGER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,6 +87,12 @@ class GetSalesSyncService:
 
         # DeduplicationMatcher pour déduplication locale (unified_contacts)
         self.local_matcher = DeduplicationMatcher() if DEDUP_MATCHER_AVAILABLE else None
+
+        # CompanyManager pour gestion des entreprises (Phase 3)
+        self.company_manager = CompanyManager() if COMPANY_MANAGER_AVAILABLE else None
+
+        # ContactManager pour gestion des contacts avec company
+        self.contact_manager = ContactManager() if CONTACT_MANAGER_AVAILABLE else None
 
     def sync_leads(
         self,
@@ -238,6 +258,9 @@ class GetSalesSyncService:
                         company_choice = {'type': 'existing', 'id': merge_data['use_existing_company_id']}
                     elif merge_data.get('create_new_company'):
                         company_choice = {'type': 'create_new'}
+                    elif merge_data.get('use_local_company_id'):
+                        # Nouveau: utiliser une company locale
+                        company_choice = {'type': 'local', 'local_id': merge_data['use_local_company_id']}
 
                 # Récupérer les messages LinkedIn pour ce lead
                 lead_uuid = getsales_data.get('uuid')
@@ -254,6 +277,27 @@ class GetSalesSyncService:
                         logger.warning(f"Impossible de récupérer les messages: {e}")
                         getsales_data['_messages'] = []
 
+                # === Phase 4: Company workflow ===
+                local_company_id = None
+                hubspot_company_id = None
+
+                # Si company_choice spécifie une company locale
+                if company_choice and company_choice.get('type') == 'local':
+                    local_company_id = company_choice.get('local_id')
+                    logger.info(f"Utilisation company locale: {local_company_id}")
+                    # Sync vers HubSpot si nécessaire
+                    hubspot_company_id = self._sync_company_to_hubspot(local_company_id, getsales_data)
+                    if hubspot_company_id:
+                        company_choice = {'type': 'existing', 'id': hubspot_company_id}
+                else:
+                    # Auto-find ou créer local company
+                    local_company_id = self._find_or_create_local_company(getsales_data)
+                    if local_company_id:
+                        # Sync vers HubSpot
+                        hubspot_company_id = self._sync_company_to_hubspot(local_company_id, getsales_data)
+                        if hubspot_company_id and not company_choice:
+                            company_choice = {'type': 'existing', 'id': hubspot_company_id}
+
                 # Créer nouveau contact HubSpot
                 contact = self._create_hubspot_contact(getsales_data, company_choice=company_choice)
 
@@ -261,6 +305,14 @@ class GetSalesSyncService:
                 self._sync_interactions(
                     hubspot_contact_id=contact['id'],
                     getsales_lead=getsales_data
+                )
+
+                # === Sauvegarder le contact localement avec company_id ===
+                local_contact_uuid = self._save_contact_locally(
+                    getsales_data=getsales_data,
+                    local_company_id=local_company_id,
+                    hubspot_contact_id=contact['id'],
+                    hubspot_company_id=hubspot_company_id
                 )
 
                 # Marquer comme validé
@@ -272,11 +324,15 @@ class GetSalesSyncService:
                 # Message avec info company
                 company_msg = ""
                 if contact.get('company_id'):
-                    company_msg = f" + Company {contact['company_id']}"
+                    company_msg = f" + HubSpot Company {contact['company_id']}"
+                if local_company_id:
+                    company_msg += f" (local: {local_company_id})"
 
                 return {
                     'success': True,
                     'hubspot_contact_id': contact['id'],
+                    'local_contact_uuid': local_contact_uuid,
+                    'local_company_id': local_company_id,
                     'message': f"Contact créé: {contact['id']}{company_msg}"
                 }
 
@@ -689,6 +745,240 @@ class GetSalesSyncService:
             if hs == hs_field:
                 return gs
         return hs_field
+
+    # =========================================================================
+    # COMPANY SUPPORT (Phase 4 - Companies/Contacts separation)
+    # =========================================================================
+
+    def _find_or_create_local_company(
+        self,
+        getsales_data: Dict[str, Any]
+    ) -> Optional[int]:
+        """
+        Trouve ou crée une entreprise dans la base locale.
+
+        Utilise le matching hiérarchique de CompanyManager:
+        1. Par website/domain
+        2. Par nom fuzzy
+        3. Création si non trouvé
+
+        Args:
+            getsales_data: Données du lead GetSales
+
+        Returns:
+            company_id local ou None si pas disponible
+        """
+        if not self.company_manager:
+            logger.debug("CompanyManager non disponible - skip local company")
+            return None
+
+        company_name = getsales_data.get('company_name')
+        if not company_name:
+            logger.debug("Pas de company_name dans getsales_data")
+            return None
+
+        try:
+            # Préparer les données pour le matching
+            lead_data = {
+                'company_name': company_name,
+                'domain': getsales_data.get('domain'),
+                'website': getsales_data.get('domain'),
+                'city': getsales_data.get('company_city'),
+                'source': 'getsales',
+                'campaign_id': getsales_data.get('campaign_id'),
+            }
+
+            company_id, created = self.company_manager.find_or_create_company(lead_data)
+
+            if created:
+                logger.info(f"Entreprise locale créée: {company_name} (ID: {company_id})")
+            else:
+                logger.info(f"Entreprise locale trouvée: {company_name} (ID: {company_id})")
+
+            return company_id
+
+        except Exception as e:
+            logger.error(f"Erreur find_or_create_local_company: {e}")
+            return None
+
+    def _sync_company_to_hubspot(
+        self,
+        local_company_id: int,
+        getsales_data: Dict[str, Any]
+    ) -> Optional[str]:
+        """
+        Synchronise une entreprise locale vers HubSpot.
+
+        Args:
+            local_company_id: ID de l'entreprise locale
+            getsales_data: Données du lead (pour enrichir la company)
+
+        Returns:
+            hubspot_company_id ou None si échec
+        """
+        if not self.company_manager or not self.hubspot:
+            return None
+
+        try:
+            # Récupérer l'entreprise locale
+            company = self.company_manager.get_company(local_company_id)
+            if not company:
+                logger.warning(f"Entreprise locale {local_company_id} non trouvée")
+                return None
+
+            # Déjà sync?
+            if company.get('hubspot_company_id'):
+                return company['hubspot_company_id']
+
+            # Créer ou trouver dans HubSpot
+            company_name = company.get('company_name') or getsales_data.get('company_name')
+            domain = company.get('website') or getsales_data.get('domain')
+
+            if not company_name:
+                return None
+
+            hubspot_result = self.hubspot.get_or_create_company(
+                name=company_name,
+                domain=domain,
+                additional_properties={
+                    'city': company.get('city') or getsales_data.get('company_city'),
+                    'industry': getsales_data.get('company_industry'),
+                }
+            )
+
+            if hubspot_result:
+                hubspot_company_id = hubspot_result['id']
+
+                # Marquer comme sync localement
+                self.company_manager.mark_synced_hubspot(local_company_id, hubspot_company_id)
+
+                action = "trouvée" if not hubspot_result.get('created') else "créée"
+                logger.info(f"Company HubSpot {action}: {company_name} (ID: {hubspot_company_id})")
+
+                return hubspot_company_id
+
+        except Exception as e:
+            logger.error(f"Erreur sync_company_to_hubspot: {e}")
+
+        return None
+
+    def _save_contact_locally(
+        self,
+        getsales_data: Dict[str, Any],
+        local_company_id: Optional[int],
+        hubspot_contact_id: str,
+        hubspot_company_id: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Sauvegarde le contact dans la base locale avec lien vers company.
+
+        Args:
+            getsales_data: Données du lead GetSales
+            local_company_id: ID de l'entreprise locale
+            hubspot_contact_id: ID du contact HubSpot créé
+            hubspot_company_id: ID de la company HubSpot (optionnel)
+
+        Returns:
+            UUID du contact local ou None
+        """
+        if not self.contact_manager:
+            return None
+
+        try:
+            # Extraire les stats de campagne
+            campaign_stats = self._extract_campaign_stats(getsales_data)
+
+            # Préparer les données du contact
+            contact_data = {
+                'getsales_uuid': getsales_data.get('uuid'),
+                'hubspot_contact_id': hubspot_contact_id,
+                'firstname': getsales_data.get('first_name'),
+                'lastname': getsales_data.get('last_name'),
+                'email': getsales_data.get('email'),
+                'phone': getsales_data.get('phone'),
+                'job_title': getsales_data.get('position'),
+                'linkedin_url': self.dedup._format_linkedin_url(getsales_data.get('linkedin')),
+                'linkedin_headline': getsales_data.get('headline'),
+                'linkedin_bio': getsales_data.get('about'),
+                'getsales_flow_uuid': campaign_stats.get('flow_uuid'),
+                'getsales_campaign_id': campaign_stats.get('flow_name'),
+                'messages_sent': len([m for m in getsales_data.get('_messages', [])
+                                      if m.get('type') in ('outbox', 'out', 'sent')]),
+                'messages_received': len([m for m in getsales_data.get('_messages', [])
+                                          if m.get('type') in ('inbox', 'in', 'received')]),
+                'last_interaction_at': campaign_stats.get('last_interaction_date'),
+                'synced_to_hubspot': True,
+                'last_sync_hubspot': datetime.now().isoformat(),
+                'campaign_id': getsales_data.get('campaign_id'),
+            }
+
+            # Utiliser la nouvelle méthode avec company_id
+            contact_uuid = self.contact_manager.add_contact_with_company(
+                data=contact_data,
+                source='getsales',
+                company_id=local_company_id
+            )
+
+            # Mettre à jour les stats de la company
+            if local_company_id and self.company_manager:
+                self.company_manager.update_company_stats(local_company_id)
+
+            logger.info(f"Contact local créé: {contact_uuid} (company_id: {local_company_id})")
+            return contact_uuid
+
+        except Exception as e:
+            logger.error(f"Erreur save_contact_locally: {e}")
+            return None
+
+    def _find_company_matches(
+        self,
+        getsales_data: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Trouve les entreprises locales correspondant au lead.
+
+        Utilisé pour afficher les options dans l'UI de validation.
+
+        Args:
+            getsales_data: Données du lead GetSales
+
+        Returns:
+            Liste de matches avec score: [{'company': {...}, 'similarity_score': 0.95}, ...]
+        """
+        if not self.company_manager:
+            return []
+
+        company_name = getsales_data.get('company_name')
+        if not company_name:
+            return []
+
+        try:
+            # Chercher par nom fuzzy
+            matches = self.company_manager.find_by_name_fuzzy(
+                company_name,
+                threshold=0.70,  # Seuil bas pour proposer plus de choix
+                limit=5
+            )
+
+            # Ajouter match exact par domain si disponible
+            domain = getsales_data.get('domain')
+            if domain:
+                company = self.company_manager.find_by_website(domain)
+                if company:
+                    # Vérifier si pas déjà dans les matches
+                    existing_ids = [m['company']['id'] for m in matches]
+                    if company['id'] not in existing_ids:
+                        matches.insert(0, {
+                            'company': company,
+                            'similarity_score': 1.0,
+                            'match_type': 'domain'
+                        })
+
+            return matches
+
+        except Exception as e:
+            logger.error(f"Erreur find_company_matches: {e}")
+            return []
 
     def _sync_interactions(
         self,

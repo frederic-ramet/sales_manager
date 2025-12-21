@@ -1427,3 +1427,389 @@ class ContactManager:
     def delete_campagne(self, campagne_id: str) -> int:
         """Méthode legacy."""
         return self.delete_campaign(campagne_id)
+
+    # =========================================================================
+    # COMPANY SUPPORT (Phase 3 - Companies/Contacts separation)
+    # =========================================================================
+
+    def _has_company_id_column(self) -> bool:
+        """Vérifie si la colonne company_id existe (nouveau schéma)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(contacts)")
+                columns = [row[1] for row in cursor.fetchall()]
+                return 'company_id' in columns
+        except Exception:
+            return False
+
+    def _get_table_name(self) -> str:
+        """Retourne le nom de la table à utiliser (contacts ou unified_contacts)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='contacts'
+            """)
+            if cursor.fetchone():
+                return 'contacts'
+            return 'unified_contacts'
+
+    def get_contacts_by_company(
+        self,
+        company_id: int,
+        status: str = 'active',
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère tous les contacts d'une entreprise.
+
+        Args:
+            company_id: ID de l'entreprise
+            status: Statut des contacts (active, archived, etc.)
+            limit: Nombre max de résultats
+
+        Returns:
+            Liste des contacts de l'entreprise
+        """
+        table = self._get_table_name()
+
+        # Vérifier si le nouveau schéma est disponible
+        if table != 'contacts':
+            logger.warning("get_contacts_by_company: nouveau schéma non disponible")
+            return []
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute(f"""
+                SELECT * FROM {table}
+                WHERE company_id = ?
+                  AND status = ?
+                ORDER BY lastname, firstname
+                LIMIT ?
+            """, (company_id, status, limit))
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def link_contact_to_company(self, contact_uuid: str, company_id: int) -> bool:
+        """
+        Lie un contact à une entreprise.
+
+        Args:
+            contact_uuid: UUID du contact
+            company_id: ID de l'entreprise
+
+        Returns:
+            True si lié avec succès
+        """
+        table = self._get_table_name()
+
+        if table != 'contacts':
+            logger.warning("link_contact_to_company: nouveau schéma non disponible")
+            return False
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(f"""
+                UPDATE {table}
+                SET company_id = ?, updated_at = ?
+                WHERE uuid = ?
+            """, (company_id, datetime.now(), contact_uuid))
+
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def unlink_contact_from_company(self, contact_uuid: str) -> bool:
+        """
+        Délie un contact de son entreprise.
+
+        Args:
+            contact_uuid: UUID du contact
+
+        Returns:
+            True si délié avec succès
+        """
+        table = self._get_table_name()
+
+        if table != 'contacts':
+            logger.warning("unlink_contact_from_company: nouveau schéma non disponible")
+            return False
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(f"""
+                UPDATE {table}
+                SET company_id = NULL, updated_at = ?
+                WHERE uuid = ?
+            """, (datetime.now(), contact_uuid))
+
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def add_contact_with_company(
+        self,
+        data: Dict[str, Any],
+        source: str,
+        company_id: Optional[int] = None
+    ) -> str:
+        """
+        Ajoute un contact avec lien vers une entreprise (nouveau schéma).
+
+        Args:
+            data: Données du contact
+            source: Source (sirene, hubspot, getsales, pappers)
+            company_id: ID de l'entreprise (optionnel)
+
+        Returns:
+            UUID du contact créé
+        """
+        table = self._get_table_name()
+
+        if table != 'contacts':
+            # Fallback vers ancien schéma
+            return self.add_contact(data, source)
+
+        contact_uuid = self._generate_uuid()
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO contacts (
+                    uuid, company_id,
+                    getsales_uuid, hubspot_contact_id,
+                    firstname, lastname, email, phone, mobile,
+                    job_title, department, seniority,
+                    linkedin_url, linkedin_headline, linkedin_bio,
+                    prospection_status, messages_sent, messages_received, last_interaction_at,
+                    getsales_campaign_id, getsales_flow_uuid,
+                    synced_to_hubspot, last_sync_hubspot,
+                    source, campaign_id,
+                    status, notes, tags, raw_data
+                ) VALUES (
+                    ?, ?,
+                    ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    'active', ?, ?, ?
+                )
+            """, (
+                contact_uuid,
+                company_id,
+                data.get('getsales_uuid'),
+                data.get('hubspot_contact_id'),
+                data.get('firstname'),
+                data.get('lastname'),
+                data.get('email'),
+                data.get('phone') or data.get('telephone'),
+                data.get('mobile'),
+                data.get('job_title'),
+                data.get('department'),
+                data.get('seniority'),
+                data.get('linkedin_url'),
+                data.get('linkedin_headline'),
+                data.get('linkedin_bio'),
+                data.get('prospection_status'),
+                data.get('messages_sent', 0),
+                data.get('messages_received', 0),
+                data.get('last_interaction_at'),
+                data.get('getsales_campaign_id'),
+                data.get('getsales_flow_uuid'),
+                1 if data.get('synced_to_hubspot') else 0,
+                data.get('last_sync_hubspot'),
+                source.lower(),
+                data.get('campaign_id'),
+                data.get('notes'),
+                data.get('tags'),
+                json.dumps(data, ensure_ascii=False, default=str) if data else None
+            ))
+
+            conn.commit()
+
+        logger.info(f"Contact ajouté (nouveau schéma): {contact_uuid} (company_id: {company_id})")
+        return contact_uuid
+
+    def search_with_company(
+        self,
+        query: str = None,
+        company_id: int = None,
+        source: str = None,
+        status: str = 'active',
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        Recherche des contacts avec support du filtre company_id.
+
+        Args:
+            query: Recherche texte
+            company_id: Filtrer par entreprise
+            source: Filtrer par source
+            status: Statut des contacts
+            limit: Nombre max de résultats
+            offset: Offset pour pagination
+
+        Returns:
+            Liste de contacts avec infos entreprise
+        """
+        table = self._get_table_name()
+
+        conditions = []
+        params = []
+
+        if status:
+            conditions.append("c.status = ?")
+            params.append(status)
+
+        if company_id is not None:
+            if table == 'contacts':
+                conditions.append("c.company_id = ?")
+                params.append(company_id)
+            else:
+                # Ancien schéma: pas de support company_id
+                pass
+
+        if source:
+            conditions.append("c.source = ?")
+            params.append(source.lower())
+
+        if query:
+            conditions.append("""
+                (c.firstname LIKE ? OR c.lastname LIKE ? OR c.email LIKE ?)
+            """)
+            search_term = f"%{query}%"
+            params.extend([search_term, search_term, search_term])
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if table == 'contacts':
+                # Nouveau schéma: JOIN avec companies
+                sql = f"""
+                    SELECT c.*,
+                           comp.company_name,
+                           comp.siren,
+                           comp.city as company_city,
+                           comp.website
+                    FROM contacts c
+                    LEFT JOIN companies comp ON c.company_id = comp.id
+                    {where_clause}
+                    ORDER BY c.created_at DESC
+                    LIMIT ? OFFSET ?
+                """
+            else:
+                # Ancien schéma
+                sql = f"""
+                    SELECT * FROM unified_contacts c
+                    {where_clause}
+                    ORDER BY c.created_at DESC
+                    LIMIT ? OFFSET ?
+                """
+
+            params.extend([limit, offset])
+            cursor.execute(sql, params)
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_contact_with_company(self, contact_uuid: str) -> Optional[Dict[str, Any]]:
+        """
+        Récupère un contact avec les infos de son entreprise.
+
+        Args:
+            contact_uuid: UUID du contact
+
+        Returns:
+            Dict du contact avec infos entreprise ou None
+        """
+        table = self._get_table_name()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if table == 'contacts':
+                cursor.execute("""
+                    SELECT c.*,
+                           comp.id as company_id,
+                           comp.company_name,
+                           comp.siren,
+                           comp.siret_list,
+                           comp.ape_code,
+                           comp.city as company_city,
+                           comp.website,
+                           comp.hubspot_company_id
+                    FROM contacts c
+                    LEFT JOIN companies comp ON c.company_id = comp.id
+                    WHERE c.uuid = ?
+                """, (contact_uuid,))
+            else:
+                cursor.execute(
+                    "SELECT * FROM unified_contacts WHERE uuid = ?",
+                    (contact_uuid,)
+                )
+
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def count_contacts_by_company(self, company_id: int) -> int:
+        """
+        Compte le nombre de contacts d'une entreprise.
+
+        Args:
+            company_id: ID de l'entreprise
+
+        Returns:
+            Nombre de contacts
+        """
+        table = self._get_table_name()
+
+        if table != 'contacts':
+            return 0
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) FROM contacts
+                WHERE company_id = ? AND status = 'active'
+            """, (company_id,))
+            return cursor.fetchone()[0]
+
+    def get_orphan_contacts(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Récupère les contacts sans entreprise associée.
+
+        Args:
+            limit: Nombre max de résultats
+
+        Returns:
+            Liste de contacts orphelins
+        """
+        table = self._get_table_name()
+
+        if table != 'contacts':
+            return []
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT * FROM contacts
+                WHERE company_id IS NULL AND status = 'active'
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (limit,))
+
+            return [dict(row) for row in cursor.fetchall()]
