@@ -221,6 +221,16 @@ with tab_main:
         limit=50
     )
 
+    # Helper pour afficher le badge de confiance
+    def confidence_badge(confidence: str) -> str:
+        badges = {
+            'exact': '🔴 EXACT',
+            'high': '🟠 HIGH',
+            'medium': '🟡 MEDIUM',
+            'low': '⚪ LOW'
+        }
+        return badges.get(confidence, confidence)
+
     if not pending_leads:
         st.info("Aucun lead correspondant aux filtres")
     else:
@@ -239,58 +249,143 @@ with tab_main:
             else:
                 status_badge = "⏳"
 
-            # Badge doublon
-            dup_badge = "⚠️ Doublon" if lead.duplicate_status != 'none' else ""
+            # Badge doublon (HubSpot ou local)
+            total_matches = len(lead.hubspot_matches or []) + len(lead.local_matches or [])
+            dup_badge = f"⚠️ {total_matches} doublon(s)" if total_matches > 0 else ""
 
             with st.expander(
                 f"{status_badge} {name} - {company} {dup_badge}",
                 expanded=(lead.validation_status == 'pending')
             ):
-                col1, col2 = st.columns(2)
+                # === Informations du contact + édition ===
+                edit_mode = st.session_state.get(f'edit_mode_{lead.id}', False)
 
-                with col1:
-                    st.markdown("**Informations GetSales**")
-                    st.write(f"📧 Email: {lead_data.get('email', 'N/A')}")
-                    st.write(f"🏢 Entreprise: {company}")
-                    st.write(f"💼 Poste: {lead_data.get('position', 'N/A')}")
+                if edit_mode:
+                    st.markdown("**📝 Modifier les informations**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        edited_firstname = st.text_input(
+                            "Prénom",
+                            value=lead_data.get('first_name', ''),
+                            key=f"edit_fn_{lead.id}"
+                        )
+                    with col2:
+                        edited_lastname = st.text_input(
+                            "Nom",
+                            value=lead_data.get('last_name', ''),
+                            key=f"edit_ln_{lead.id}"
+                        )
+                    with col3:
+                        edited_company = st.text_input(
+                            "Entreprise",
+                            value=lead_data.get('company_name', ''),
+                            key=f"edit_co_{lead.id}"
+                        )
 
-                    linkedin = lead_data.get('linkedin', '')
-                    if linkedin:
-                        if not linkedin.startswith('http'):
-                            linkedin = f"https://linkedin.com/in/{linkedin}"
-                        st.write(f"🔗 [LinkedIn]({linkedin})")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("💾 Appliquer", key=f"apply_edit_{lead.id}", use_container_width=True):
+                            # Mettre à jour les données dans la session
+                            lead_data['first_name'] = edited_firstname
+                            lead_data['last_name'] = edited_lastname
+                            lead_data['company_name'] = edited_company
+                            # Sauvegarder
+                            lead.getsales_data = lead_data
+                            db.save_pending_lead(lead)
+                            st.session_state[f'edit_mode_{lead.id}'] = False
+                            st.success("Modifications enregistrées")
+                            st.rerun()
+                    with col2:
+                        if st.button("❌ Annuler", key=f"cancel_edit_{lead.id}", use_container_width=True):
+                            st.session_state[f'edit_mode_{lead.id}'] = False
+                            st.rerun()
+                else:
+                    col1, col2 = st.columns(2)
 
-                with col2:
-                    st.markdown("**Interactions**")
-                    messages = lead_data.get('_messages', [])
-                    if messages:
-                        outbox = len([m for m in messages if m.get('type') == 'outbox'])
-                        inbox = len([m for m in messages if m.get('type') == 'inbox'])
-                        st.write(f"📨 Messages envoyés: {outbox}")
-                        st.write(f"📥 Réponses: {inbox}")
+                    with col1:
+                        st.markdown("**Informations GetSales**")
+                        st.write(f"👤 {lead_data.get('first_name', '')} {lead_data.get('last_name', '')}")
+                        st.write(f"📧 Email: {lead_data.get('email', 'N/A')}")
+                        st.write(f"🏢 Entreprise: {company}")
+                        st.write(f"💼 Poste: {lead_data.get('position', 'N/A')}")
 
-                        # Dernière interaction
+                        linkedin = lead_data.get('linkedin', '')
+                        if linkedin:
+                            if not linkedin.startswith('http'):
+                                linkedin = f"https://linkedin.com/in/{linkedin}"
+                            st.write(f"🔗 [LinkedIn]({linkedin})")
+
+                        # Bouton éditer
+                        if lead.validation_status == 'pending':
+                            if st.button("✏️ Modifier", key=f"edit_btn_{lead.id}"):
+                                st.session_state[f'edit_mode_{lead.id}'] = True
+                                st.rerun()
+
+                    with col2:
+                        st.markdown("**Interactions**")
+                        messages = lead_data.get('_messages', [])
                         if messages:
+                            outbox = len([m for m in messages if m.get('type') == 'outbox'])
+                            inbox = len([m for m in messages if m.get('type') == 'inbox'])
+                            st.write(f"📨 Messages envoyés: {outbox}")
+                            st.write(f"📥 Réponses: {inbox}")
+
                             dates = [m.get('sent_at', '') for m in messages if m.get('sent_at')]
                             if dates:
                                 last_date = max(dates)
                                 st.write(f"🕐 Dernière: {last_date[:10]}")
-                    else:
-                        st.write("Aucune interaction")
+                        else:
+                            st.write("Aucune interaction")
 
-                # Doublons détectés
+                # === Doublons locaux (Base de Leads) ===
+                if lead.local_matches:
+                    st.divider()
+                    st.markdown(f"**🗃️ Doublons Base de Leads** ({len(lead.local_matches)})")
+
+                    for i, match in enumerate(lead.local_matches):
+                        conf = match.get('confidence', 'low')
+                        match_type = match.get('match_type', 'unknown')
+                        score = match.get('similarity_score', 1.0)
+
+                        with st.container():
+                            col1, col2, col3 = st.columns([2, 3, 1])
+
+                            with col1:
+                                st.markdown(f"{confidence_badge(conf)}")
+                                st.caption(f"Type: {match_type}")
+                                if score < 1.0:
+                                    st.caption(f"Score: {score:.0%}")
+
+                            with col2:
+                                match_name = f"{match.get('firstname', '')} {match.get('lastname', '')}".strip() or "N/A"
+                                st.write(f"👤 {match_name}")
+                                st.write(f"🏢 {match.get('company_name', 'N/A')}")
+                                if match.get('email'):
+                                    st.caption(f"📧 {match.get('email')}")
+                                st.caption(f"Source: {match.get('source', 'N/A')}")
+
+                            with col3:
+                                if lead.validation_status == 'pending':
+                                    if st.button("🔗 Lier", key=f"link_{lead.id}_{i}", use_container_width=True):
+                                        st.session_state[f'linking_{lead.id}'] = match
+                                        st.rerun()
+
+                # === Doublons HubSpot ===
                 if lead.hubspot_matches:
-                    st.warning(f"⚠️ {len(lead.hubspot_matches)} doublon(s) potentiel(s)")
+                    st.divider()
+                    st.markdown(f"**🟠 Doublons HubSpot** ({len(lead.hubspot_matches)})")
 
                     for match in lead.hubspot_matches:
                         contact = match.get('contact_data', {})
                         st.markdown(f"""
-                        **Match {match.get('match_type')}** (confiance: {match.get('confidence')})
-                        - Nom: {contact.get('firstname', '')} {contact.get('lastname', '')}
-                        - Email: {contact.get('email', 'N/A')}
-                        - Entreprise: {contact.get('company', 'N/A')}
+                        **{confidence_badge(match.get('confidence', 'medium'))}** - {match.get('match_type', '')}
+                        - 👤 {contact.get('firstname', '')} {contact.get('lastname', '')}
+                        - 📧 {contact.get('email', 'N/A')}
+                        - 🏢 {contact.get('company', 'N/A')}
                         """)
-                else:
+
+                # Message si aucun doublon
+                if not lead.local_matches and not lead.hubspot_matches:
                     st.success("✅ Aucun doublon détecté")
 
                 # Actions (si pending)
@@ -413,6 +508,66 @@ with tab_main:
                     with col2:
                         if st.button("❌ Annuler", key=f"cancel_merge_{lead.id}", use_container_width=True):
                             del st.session_state[f'merging_{lead.id}']
+                            st.rerun()
+
+                # Formulaire de liaison à contact existant (si activé)
+                if st.session_state.get(f'linking_{lead.id}'):
+                    st.divider()
+                    st.subheader("🔗 Lier à un contact existant")
+
+                    link_match = st.session_state[f'linking_{lead.id}']
+                    link_name = f"{link_match.get('firstname', '')} {link_match.get('lastname', '')}".strip() or "N/A"
+
+                    st.info(f"""
+                    **Contact sélectionné:**
+                    - 👤 {link_name}
+                    - 🏢 {link_match.get('company_name', 'N/A')}
+                    - 📧 {link_match.get('email', 'N/A')}
+                    - 📊 Source: {link_match.get('source', 'N/A')}
+                    """)
+
+                    st.warning("""
+                    ⚠️ Cette action va:
+                    - Ajouter l'identifiant GetSales au contact existant
+                    - Marquer ce lead comme "validé"
+                    """)
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        if st.button("✅ Confirmer liaison", key=f"confirm_link_{lead.id}", type="primary", use_container_width=True):
+                            try:
+                                # Récupérer l'UUID du contact à lier
+                                contact_uuid = link_match.get('uuid')
+                                getsales_uuid = lead.getsales_uuid
+
+                                if contact_uuid:
+                                    # Import du ContactManager pour mettre à jour le contact
+                                    from modules.lead_scraper import ContactManager
+                                    cm = ContactManager()
+
+                                    # Mettre à jour le contact avec getsales_uuid
+                                    cm.update_contact(contact_uuid, {'getsales_uuid': getsales_uuid})
+
+                                    # Marquer le pending lead comme approved
+                                    db.update_lead_status(
+                                        lead_id=lead.id,
+                                        status='approved',
+                                        merge_decision={'linked_to_contact_uuid': contact_uuid}
+                                    )
+
+                                    del st.session_state[f'linking_{lead.id}']
+                                    st.success(f"✅ Contact lié avec succès!")
+                                    st.rerun()
+                                else:
+                                    st.error("UUID du contact non trouvé")
+                            except Exception as e:
+                                st.error(f"Erreur: {e}")
+                                logger.exception("Erreur liaison contact")
+
+                    with col2:
+                        if st.button("❌ Annuler", key=f"cancel_link_{lead.id}", use_container_width=True):
+                            del st.session_state[f'linking_{lead.id}']
                             st.rerun()
 
                 # Info si déjà traité
