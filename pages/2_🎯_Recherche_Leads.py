@@ -32,7 +32,7 @@ load_dotenv()
 # Navigation
 hide_sidebar()
 
-st.title("🎯 Recherche de Leads")
+st.title("🎯 Ajout Leads SIRENE")
 st.markdown("Extraction et enrichissement de leads B2B français")
 
 render_top_nav(current_page="pages/2_🎯_Recherche_Leads.py")

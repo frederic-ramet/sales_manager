@@ -9,7 +9,7 @@ from pathlib import Path
 # Pages disponibles (navigation principale)
 PAGES = [
     {"icon": "🏭", "name": "Accueil", "path": "app.py"},
-    {"icon": "🎯", "name": "Recherche", "path": "pages/2_🎯_Recherche_Leads.py"},
+    {"icon": "🎯", "name": "Ajout Leads SIRENE", "path": "pages/2_🎯_Recherche_Leads.py"},
     {"icon": "📜", "name": "Base Leads", "path": "pages/3_📜_Base_de_Leads.py"},
     {"icon": "🔄", "name": "GetSales", "path": "pages/4_🔄_GetSales_Sync.py"},
 ]
