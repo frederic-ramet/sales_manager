@@ -9,6 +9,13 @@ from .getsales_client import GetSalesClient
 from .models import GetSalesDB, PendingLead, LeadInteraction
 from .deduplication import DeduplicationService
 
+# Import ContactManager pour déduplication locale
+try:
+    from modules.lead_scraper import ContactManager
+    CONTACT_MANAGER_AVAILABLE = True
+except ImportError:
+    CONTACT_MANAGER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +70,9 @@ class GetSalesSyncService:
         self.hubspot = hubspot_client
         self.db = db
         self.dedup = DeduplicationService(hubspot_client)
+
+        # ContactManager pour déduplication locale
+        self.contact_manager = ContactManager() if CONTACT_MANAGER_AVAILABLE else None
 
     def sync_leads(
         self,
@@ -122,12 +132,21 @@ class GetSalesSyncService:
                 duplicates = self.dedup.find_duplicates(lead)
                 duplicate_status = self.dedup.get_duplicate_status(duplicates)
 
+                # Détecter doublons locaux (unified_contacts)
+                local_matches = []
+                if self.contact_manager:
+                    local_matches = self._find_local_duplicates(lead)
+                    # Si pas de doublons HubSpot mais doublons locaux, marquer comme potential
+                    if local_matches and duplicate_status == 'none':
+                        duplicate_status = 'potential'
+
                 # Créer ou mettre à jour le pending lead
                 pending = PendingLead(
                     id=existing.id if existing else None,
                     getsales_uuid=lead_uuid,
                     getsales_data=lead,
                     hubspot_matches=[d.to_dict() for d in duplicates],
+                    local_matches=local_matches,
                     duplicate_status=duplicate_status,
                     validation_status=existing.validation_status if existing else 'pending'
                 )
@@ -427,6 +446,58 @@ class GetSalesSyncService:
             return 'reply_received'
 
         return 'unknown'
+
+    def _find_local_duplicates(self, lead: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Trouve les doublons dans la base locale unified_contacts.
+
+        Args:
+            lead: Données du lead GetSales
+
+        Returns:
+            Liste de matches avec 'contact', 'match_type', 'confidence'
+        """
+        if not self.contact_manager:
+            return []
+
+        # Extraire les champs pour la recherche
+        email = lead.get('email')
+        linkedin_url = lead.get('linkedin')
+        if linkedin_url and not linkedin_url.startswith('http'):
+            linkedin_url = f"https://linkedin.com/in/{linkedin_url}"
+
+        company_name = lead.get('company_name')
+        first_name = lead.get('first_name')
+        last_name = lead.get('last_name')
+        getsales_uuid = lead.get('uuid')
+
+        # Appeler find_all_duplicates
+        matches = self.contact_manager.find_all_duplicates(
+            email=email,
+            linkedin_url=linkedin_url,
+            company_name=company_name,
+            firstname=first_name,
+            lastname=last_name,
+            getsales_uuid=getsales_uuid
+        )
+
+        # Simplifier les résultats pour le stockage JSON
+        simplified = []
+        for match in matches:
+            contact = match['contact']
+            simplified.append({
+                'uuid': contact.get('uuid'),
+                'company_name': contact.get('company_name'),
+                'firstname': contact.get('firstname'),
+                'lastname': contact.get('lastname'),
+                'email': contact.get('email'),
+                'linkedin_url': contact.get('linkedin_url'),
+                'source': contact.get('source'),
+                'match_type': match['match_type'],
+                'confidence': match['confidence']
+            })
+
+        return simplified
 
     def get_sync_status(self) -> Dict[str, Any]:
         """

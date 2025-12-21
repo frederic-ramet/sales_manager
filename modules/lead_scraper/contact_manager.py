@@ -605,6 +605,194 @@ class ContactManager:
 
             return None
 
+    def find_all_duplicates(
+        self,
+        email: str = None,
+        siren: str = None,
+        linkedin_url: str = None,
+        hubspot_contact_id: str = None,
+        getsales_uuid: str = None,
+        company_name: str = None,
+        firstname: str = None,
+        lastname: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Trouve TOUS les doublons potentiels avec leur type de match.
+
+        Retourne une liste de matches avec:
+        - contact: les données du contact
+        - match_type: 'hubspot_id', 'getsales_uuid', 'linkedin', 'email', 'siren', 'company_name', 'fullname'
+        - confidence: 'high' (ID exact), 'medium' (email/linkedin), 'low' (nom entreprise)
+
+        Args:
+            email: Email à chercher
+            siren: SIREN à chercher
+            linkedin_url: URL LinkedIn
+            hubspot_contact_id: ID HubSpot
+            getsales_uuid: UUID GetSales
+            company_name: Nom de l'entreprise
+            firstname: Prénom du contact
+            lastname: Nom du contact
+
+        Returns:
+            Liste de dicts avec 'contact', 'match_type', 'confidence'
+        """
+        matches = []
+        seen_uuids = set()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # 1. Par HubSpot ID (high confidence)
+            if hubspot_contact_id:
+                cursor.execute(
+                    "SELECT * FROM unified_contacts WHERE hubspot_contact_id = ? AND status = 'active'",
+                    (hubspot_contact_id,)
+                )
+                for row in cursor.fetchall():
+                    contact = dict(row)
+                    if contact['uuid'] not in seen_uuids:
+                        seen_uuids.add(contact['uuid'])
+                        matches.append({
+                            'contact': contact,
+                            'match_type': 'hubspot_id',
+                            'confidence': 'high'
+                        })
+
+            # 2. Par GetSales UUID (high confidence)
+            if getsales_uuid:
+                cursor.execute(
+                    "SELECT * FROM unified_contacts WHERE getsales_uuid = ? AND status = 'active'",
+                    (getsales_uuid,)
+                )
+                for row in cursor.fetchall():
+                    contact = dict(row)
+                    if contact['uuid'] not in seen_uuids:
+                        seen_uuids.add(contact['uuid'])
+                        matches.append({
+                            'contact': contact,
+                            'match_type': 'getsales_uuid',
+                            'confidence': 'high'
+                        })
+
+            # 3. Par LinkedIn URL (high confidence)
+            if linkedin_url:
+                normalized = self._normalize_linkedin_url(linkedin_url)
+                cursor.execute(
+                    "SELECT * FROM unified_contacts WHERE linkedin_url = ? AND status = 'active'",
+                    (normalized,)
+                )
+                for row in cursor.fetchall():
+                    contact = dict(row)
+                    if contact['uuid'] not in seen_uuids:
+                        seen_uuids.add(contact['uuid'])
+                        matches.append({
+                            'contact': contact,
+                            'match_type': 'linkedin',
+                            'confidence': 'high'
+                        })
+
+            # 4. Par Email (medium confidence)
+            if email:
+                email_lower = email.lower().strip()
+                cursor.execute(
+                    "SELECT * FROM unified_contacts WHERE LOWER(email) = ? AND status = 'active'",
+                    (email_lower,)
+                )
+                for row in cursor.fetchall():
+                    contact = dict(row)
+                    if contact['uuid'] not in seen_uuids:
+                        seen_uuids.add(contact['uuid'])
+                        matches.append({
+                            'contact': contact,
+                            'match_type': 'email',
+                            'confidence': 'medium'
+                        })
+
+            # 5. Par SIREN (medium confidence)
+            if siren:
+                cursor.execute(
+                    "SELECT * FROM unified_contacts WHERE siren = ? AND status = 'active'",
+                    (siren,)
+                )
+                for row in cursor.fetchall():
+                    contact = dict(row)
+                    if contact['uuid'] not in seen_uuids:
+                        seen_uuids.add(contact['uuid'])
+                        matches.append({
+                            'contact': contact,
+                            'match_type': 'siren',
+                            'confidence': 'medium'
+                        })
+
+            # 6. Par nom d'entreprise (low confidence) - exact match insensible à la casse
+            if company_name:
+                company_normalized = company_name.lower().strip()
+                cursor.execute(
+                    "SELECT * FROM unified_contacts WHERE LOWER(company_name) = ? AND status = 'active'",
+                    (company_normalized,)
+                )
+                for row in cursor.fetchall():
+                    contact = dict(row)
+                    if contact['uuid'] not in seen_uuids:
+                        seen_uuids.add(contact['uuid'])
+                        matches.append({
+                            'contact': contact,
+                            'match_type': 'company_name',
+                            'confidence': 'low'
+                        })
+
+            # 7. Par nom complet (prénom + nom) dans la même entreprise (low confidence)
+            if firstname and lastname and company_name:
+                fn_lower = firstname.lower().strip()
+                ln_lower = lastname.lower().strip()
+                company_normalized = company_name.lower().strip()
+                cursor.execute("""
+                    SELECT * FROM unified_contacts
+                    WHERE LOWER(firstname) = ?
+                    AND LOWER(lastname) = ?
+                    AND LOWER(company_name) = ?
+                    AND status = 'active'
+                """, (fn_lower, ln_lower, company_normalized))
+                for row in cursor.fetchall():
+                    contact = dict(row)
+                    if contact['uuid'] not in seen_uuids:
+                        seen_uuids.add(contact['uuid'])
+                        matches.append({
+                            'contact': contact,
+                            'match_type': 'fullname_company',
+                            'confidence': 'medium'
+                        })
+
+        return matches
+
+    def search_by_company(self, company_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Recherche les contacts d'une entreprise par nom.
+
+        Args:
+            company_name: Nom de l'entreprise (recherche partielle)
+            limit: Nombre max de résultats
+
+        Returns:
+            Liste des contacts trouvés
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Recherche LIKE pour matching partiel
+            pattern = f"%{company_name}%"
+            cursor.execute("""
+                SELECT * FROM unified_contacts
+                WHERE company_name LIKE ? AND status = 'active'
+                ORDER BY company_name, lastname
+                LIMIT ?
+            """, (pattern, limit))
+
+            return [dict(row) for row in cursor.fetchall()]
+
     def _normalize_linkedin_url(self, url: str) -> str:
         """Normalise une URL LinkedIn."""
         if not url:
