@@ -209,11 +209,17 @@ class GetSalesClient:
 
             # Extraire les données du lead de la structure imbriquée
             # L'API retourne {lead: {...}, markers: [], flows: [], custom_fields: {}}
-            # On veut juste le contenu de 'lead'
+            # On extrait 'lead' et on ajoute 'flows' pour garder les infos de campagne
             extracted_leads = []
             for item in leads:
                 if isinstance(item, dict) and 'lead' in item:
-                    extracted_leads.append(item['lead'])
+                    lead_data = item['lead']
+                    # Ajouter les flows (campagnes) au lead
+                    if item.get('flows'):
+                        lead_data['flows'] = item['flows']
+                    if item.get('markers'):
+                        lead_data['markers'] = item['markers']
+                    extracted_leads.append(lead_data)
                 else:
                     extracted_leads.append(item)
 
@@ -262,10 +268,16 @@ class GetSalesClient:
                     break
 
                 # Extraire les données du lead de la structure imbriquée
+                # Ajouter aussi les 'flows' pour garder les infos de campagne
                 extracted_leads = []
                 for item in leads:
                     if isinstance(item, dict) and 'lead' in item:
-                        extracted_leads.append(item['lead'])
+                        lead_data = item['lead']
+                        if item.get('flows'):
+                            lead_data['flows'] = item['flows']
+                        if item.get('markers'):
+                            lead_data['markers'] = item['markers']
+                        extracted_leads.append(lead_data)
                     else:
                         extracted_leads.append(item)
 

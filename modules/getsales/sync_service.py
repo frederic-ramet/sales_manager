@@ -241,11 +241,15 @@ class GetSalesSyncService:
 
                 # Récupérer les messages LinkedIn pour ce lead
                 lead_uuid = getsales_data.get('uuid')
+                logger.info(f"Validation lead {lead_uuid} - données existantes: flow_name={getsales_data.get('flow_name')}, flows={getsales_data.get('flows')}")
+
                 if lead_uuid and self.getsales:
                     try:
                         messages = self.getsales.fetch_lead_messages(lead_uuid)
                         getsales_data['_messages'] = messages
                         logger.info(f"Messages récupérés pour lead {lead_uuid}: {len(messages)}")
+                        if messages:
+                            logger.info(f"Structure premier message: {list(messages[0].keys()) if isinstance(messages[0], dict) else type(messages[0])}")
                     except Exception as e:
                         logger.warning(f"Impossible de récupérer les messages: {e}")
                         getsales_data['_messages'] = []
@@ -325,6 +329,10 @@ class GetSalesSyncService:
         """
         messages = getsales_data.get('_messages', [])
 
+        logger.info(f"Extraction stats campagne - {len(messages)} messages trouvés")
+        if messages:
+            logger.debug(f"Premier message: {messages[0]}")
+
         stats = {
             'flow_name': None,
             'flow_uuid': None,
@@ -334,16 +342,33 @@ class GetSalesSyncService:
             'has_replied': False
         }
 
+        # Chercher flow_name dans les données du lead directement (fallback)
+        # GetSales peut stocker le flow_name au niveau du lead, pas des messages
+        if getsales_data.get('flow_name'):
+            stats['flow_name'] = getsales_data['flow_name']
+        if getsales_data.get('flow_uuid'):
+            stats['flow_uuid'] = getsales_data['flow_uuid']
+
+        # Chercher aussi dans 'flows' si présent (structure GetSales)
+        flows = getsales_data.get('flows', [])
+        if flows and isinstance(flows, list) and len(flows) > 0:
+            first_flow = flows[0]
+            if isinstance(first_flow, dict):
+                if not stats['flow_name'] and first_flow.get('name'):
+                    stats['flow_name'] = first_flow['name']
+                if not stats['flow_uuid'] and first_flow.get('uuid'):
+                    stats['flow_uuid'] = first_flow['uuid']
+
         if not messages:
             return stats
 
         # Trier les messages par date
         sorted_messages = sorted(
             messages,
-            key=lambda m: m.get('sent_at', '') or ''
+            key=lambda m: m.get('sent_at', '') or m.get('created_at', '') or ''
         )
 
-        # Extraire le flow_name du premier message sortant
+        # Extraire le flow_name du premier message sortant (si pas déjà trouvé)
         for msg in sorted_messages:
             if msg.get('flow_name') and not stats['flow_name']:
                 stats['flow_name'] = msg['flow_name']
@@ -354,18 +379,26 @@ class GetSalesSyncService:
 
         # Premier contact = premier message sortant
         for msg in sorted_messages:
-            if msg.get('type') == 'outbox' and msg.get('sent_at'):
-                stats['first_contact_date'] = msg['sent_at'][:10]  # YYYY-MM-DD
+            msg_type = msg.get('type') or msg.get('direction', '')
+            sent_at = msg.get('sent_at') or msg.get('created_at', '')
+            if msg_type in ('outbox', 'out', 'sent') and sent_at:
+                stats['first_contact_date'] = sent_at[:10]  # YYYY-MM-DD
                 break
 
         # Dernière interaction = dernier message (tous types)
         for msg in reversed(sorted_messages):
-            if msg.get('sent_at'):
-                stats['last_interaction_date'] = msg['sent_at'][:10]  # YYYY-MM-DD
+            sent_at = msg.get('sent_at') or msg.get('created_at', '')
+            if sent_at:
+                stats['last_interaction_date'] = sent_at[:10]  # YYYY-MM-DD
                 break
 
         # A répondu = au moins un message inbox
-        stats['has_replied'] = any(m.get('type') == 'inbox' for m in messages)
+        stats['has_replied'] = any(
+            m.get('type') in ('inbox', 'in', 'received') or m.get('direction') == 'in'
+            for m in messages
+        )
+
+        logger.info(f"Stats campagne extraites: flow={stats['flow_name']}, first_contact={stats['first_contact_date']}, messages={stats['interaction_count']}")
 
         return stats
 
@@ -472,7 +505,7 @@ class GetSalesSyncService:
 
         # Ajouter propriétés custom GetSales
         contact_data['getsales_uuid'] = getsales_data.get('uuid', '')
-        contact_data['import_source'] = 'GetSales'
+        contact_data['import_source'] = 'GetSales_interne'
 
         # Ajouter headline/bio si disponibles
         if getsales_data.get('headline'):
