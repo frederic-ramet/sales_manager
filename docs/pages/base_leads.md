@@ -136,23 +136,117 @@ Tableau récapitulatif montrant :
 
 ---
 
-## Stockage
+## Schéma des données (unified_contacts)
 
-Les données sont stockées localement en SQLite :
+Les données sont stockées localement en SQLite dans la table `unified_contacts` :
 
 ```
 data/
 └── leads.db    # Base de données locale
 ```
 
-### Colonnes principales
-- `siren` : Identifiant unique
-- `source` : Origine du lead
-- `denomination` : Nom de l'entreprise
-- `email` / `telephone` : Coordonnées
-- `hubspot_id` : Lien vers contact HubSpot
-- `enriched_at` : Date d'enrichissement
-- `full_data` : JSON complet des données
+### Champs principaux
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `uuid` | TEXT | Identifiant unique interne (UUID4) |
+| `source` | TEXT | Origine : sirene, hubspot, getsales, csv_import |
+| `siren` | TEXT | Numéro SIREN (9 chiffres) |
+| `siret` | TEXT | Numéro SIRET (14 chiffres) |
+| `company_name` | TEXT | Nom de l'entreprise |
+| `email` | TEXT | Adresse email |
+| `phone` | TEXT | Téléphone fixe |
+| `firstname` | TEXT | Prénom du contact |
+| `lastname` | TEXT | Nom du contact |
+| `job_title` | TEXT | Fonction/poste |
+| `linkedin_url` | TEXT | URL profil LinkedIn |
+| `website` | TEXT | Site web de l'entreprise |
+| `address` | TEXT | Adresse postale |
+| `postal_code` | TEXT | Code postal |
+| `city` | TEXT | Ville |
+| `region` | TEXT | Région |
+| `country` | TEXT | Pays |
+| `ape_code` | TEXT | Code APE/NAF (secteur d'activité) |
+| `employee_range` | TEXT | Tranche d'effectif |
+| `revenue_range` | TEXT | Tranche de chiffre d'affaires |
+
+### Champs de suivi
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `campaign_id` | TEXT | Identifiant de la campagne d'extraction |
+| `created_at` | DATETIME | Date de création |
+| `updated_at` | DATETIME | Dernière modification |
+| `enriched_at` | DATETIME | Date d'enrichissement Pappers |
+| `hubspot_contact_id` | TEXT | ID du contact HubSpot lié |
+| `synced_to_hubspot` | BOOLEAN | Synchronisé vers HubSpot ? |
+| `last_sync_hubspot` | DATETIME | Date de dernière sync |
+| `getsales_uuid` | TEXT | ID GetSales lié |
+| `notes` | TEXT | Remarques libres |
+
+---
+
+## Mapping HubSpot
+
+Lors du push vers HubSpot, les champs sont automatiquement mappés :
+
+### Propriétés standard HubSpot
+
+Ces propriétés existent par défaut dans tout compte HubSpot :
+
+| Champ local | Propriété HubSpot | Description |
+|-------------|-------------------|-------------|
+| `email` | `email` | Adresse email (obligatoire) |
+| `firstname` | `firstname` | Prénom |
+| `lastname` | `lastname` | Nom |
+| `phone` | `phone` | Téléphone |
+| `company_name` | `company` | Nom d'entreprise |
+| `job_title` | `jobtitle` | Fonction |
+| `website` | `website` | Site web |
+| `address` | `address` | Adresse |
+| `city` | `city` | Ville |
+| `postal_code` | `zip` | Code postal |
+| `country` | `country` | Pays |
+
+### Propriétés personnalisées (custom)
+
+Ces propriétés sont **créées automatiquement** dans votre compte HubSpot lors du premier push :
+
+| Champ local | Propriété HubSpot | Label dans HubSpot | Description |
+|-------------|-------------------|-------------------|-------------|
+| `siren` | `siren` | SIREN | Numéro SIREN de l'entreprise |
+| `siret` | `siret` | SIRET | Numéro SIRET de l'établissement |
+| `ape_code` | `code_ape` | Code APE/NAF | Code secteur d'activité |
+| `employee_range` | `effectif` | Effectif | Tranche d'effectif |
+| `revenue_range` | `chiffre_affaires` | Chiffre d'affaires | Tranche de CA |
+| `linkedin_url` | `linkedin_url` | LinkedIn URL | URL du profil LinkedIn |
+| (auto) | `import_source` | Source d'import | SIRENE, CSV, GetSales... |
+| `notes` | `import_notes` | Notes d'import | Remarques et commentaires |
+| `getsales_uuid` | `getsales_uuid` | GetSales UUID | Lien vers GetSales |
+
+> 💡 **Note** : Les propriétés custom sont créées dans le groupe "Contact information" de HubSpot.
+
+---
+
+## Import CSV
+
+### Colonnes reconnues automatiquement
+
+L'import CSV détecte automatiquement les colonnes suivantes :
+
+| Nom dans CSV | Champ cible | Variantes reconnues |
+|--------------|-------------|---------------------|
+| Entreprise | `company_name` | Société, Company, Raison sociale |
+| Prénom | `firstname` | First Name, Prenom |
+| Nom | `lastname` | Last Name, Nom de famille |
+| Email | `email` | Mail, Courriel, E-mail |
+| Téléphone | `phone` | Phone, Tel, Mobile |
+| Fonction | `job_title` | Poste, Position, Job Title |
+| SIREN | `siren` | N° SIREN, Numéro SIREN |
+| Ville | `city` | City, Localité |
+| Code postal | `postal_code` | CP, Zip, ZIP Code |
+| LinkedIn | `linkedin_url` | URL LinkedIn, Profil LinkedIn |
+| Notes | `notes` | Commentaire, Remarques, Comments |
 
 ---
 
