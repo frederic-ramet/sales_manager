@@ -18,7 +18,7 @@ from .enricher import Enricher
 from .hubspot_client import HubSpotClient
 from .query_parser import QueryParser
 from .lookalike import LookalikeEngine
-from .scoring import LeadScorer
+from .scoring import LeadScorer, ProspectClassifier
 from .exporter import Exporter
 from .csv_importer import CSVImporter, ImportResult
 
@@ -36,6 +36,7 @@ __all__ = [
     'QueryParser',
     'LookalikeEngine',
     'LeadScorer',
+    'ProspectClassifier',
     'Exporter',
     'CSVImporter',
     'ImportResult',
