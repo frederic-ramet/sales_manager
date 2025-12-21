@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  sales-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sales-manager
+    restart: unless-stopped
+
+    ports:
+      - "8501:8501"
+
+    environment:
+      # Streamlit config
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - STREAMLIT_SERVER_FILE_WATCHER_TYPE=auto
+
+      # Application config
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - TZ=Europe/Paris
+
+    env_file:
+      - .env
+
+    volumes:
+      # Persistent data
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+      # Hot reload for development (commentez en production)
+      - ./app.py:/app/app.py
+      - ./pages:/app/pages
+      - ./modules:/app/modules
+      - ./components:/app/components
+      - ./.streamlit:/app/.streamlit
+
+    networks:
+      - sales-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  sales-network:
+    driver: bridge
