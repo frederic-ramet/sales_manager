@@ -1,5 +1,7 @@
 """
 Page Recherche de Leads - Extraction et enrichissement B2B.
+
+SIREN v2: Classification ICP (A/B/C) + Segmentation + Presets campagne
 """
 import json
 import logging
@@ -18,8 +20,10 @@ from modules.lead_scraper import (
     Exporter,
     QueryParser,
     ContactManager,
-    HubSpotClient
+    HubSpotClient,
+    ProspectClassifier
 )
+from config.campaigns import CAMPAIGN_PRESETS, SEGMENTS, list_presets
 
 # Import CompanyManager si nouveau schéma disponible
 # Vérifie aussi que la table companies existe dans la base
@@ -94,6 +98,43 @@ def init_session_state():
         st.session_state.natural_query = ""
     if 'enable_deduplication' not in st.session_state:
         st.session_state.enable_deduplication = True
+    # SIREN v2: Nouveaux états
+    if 'selected_preset' not in st.session_state:
+        st.session_state.selected_preset = None
+    if 'classified_results' not in st.session_state:
+        st.session_state.classified_results = None
+    if 'existing_companies' not in st.session_state:
+        st.session_state.existing_companies = []
+    if 'new_companies' not in st.session_state:
+        st.session_state.new_companies = []
+
+
+def render_class_badge(prospect_class: str) -> str:
+    """Retourne un badge coloré pour la classe de prospect."""
+    badges = {
+        'A': '🟢 A',
+        'B': '🟡 B',
+        'C': '⚪ C',
+    }
+    return badges.get(prospect_class, prospect_class or '-')
+
+
+def apply_preset_filters(preset_id: str) -> Dict[str, Any]:
+    """Applique les filtres d'un preset de campagne."""
+    if not preset_id or preset_id not in CAMPAIGN_PRESETS:
+        return {}
+
+    preset = CAMPAIGN_PRESETS[preset_id]
+    filters = preset.get('filters', {})
+
+    return {
+        'effectif_min': filters.get('effectif_min', 0),
+        'effectif_max': filters.get('effectif_max', 5000),
+        'ape_groups': filters.get('ape_groups', []),
+        'geo': filters.get('geo', 'national'),
+        'target_volume': preset.get('target_volume', 100),
+        'segment': preset.get('segment', 'icp_principal'),
+    }
 
 
 def add_log(message: str):
@@ -128,38 +169,71 @@ with tab_doc:
     st.markdown(load_documentation())
 
 with tab_main:
+    # === Section 0: Presets de campagne ===
+    st.subheader("🚀 Campagnes prédéfinies")
+
+    presets = list_presets()
+    preset_options = ["⚙️ Custom (filtres manuels)"] + [
+        f"{p['icon']} {p['name']}" for p in presets
+    ]
+
+    selected_preset_idx = st.selectbox(
+        "Sélectionner une campagne",
+        range(len(preset_options)),
+        format_func=lambda x: preset_options[x],
+        help="Choisissez un preset pour pré-remplir les filtres"
+    )
+
+    # Appliquer le preset sélectionné
+    preset_filters = {}
+    selected_segment = "ICP Principal"  # Défaut
+    if selected_preset_idx > 0:
+        preset_id = list(CAMPAIGN_PRESETS.keys())[selected_preset_idx - 1]
+        preset = CAMPAIGN_PRESETS[preset_id]
+        preset_filters = apply_preset_filters(preset_id)
+        selected_segment = SEGMENTS.get(preset_filters.get('segment', 'icp_principal'), {}).get('label', 'ICP Principal')
+
+        # Afficher les infos du preset
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Volume cible", preset.get('target_volume', 100))
+        with col2:
+            st.metric("Classe min", preset.get('min_class', 'B'))
+        with col3:
+            st.metric("Meetings attendus", f"~{preset.get('expected_meetings', 0)}")
+
+    st.divider()
+
     # === Section 1: Recherche en langage naturel ===
     anthropic_available = ANTHROPIC_API_KEY and ANTHROPIC_API_KEY != "your_anthropic_api_key_here"
 
     if anthropic_available:
-        st.subheader("🔍 Recherche en langage naturel")
-        st.caption("Décrivez votre recherche : *\"PME dans la publicité à Paris\"*, *\"Restaurants Lyon +10 employés\"*")
+        with st.expander("🔍 Recherche en langage naturel", expanded=False):
+            st.caption("Décrivez votre recherche : *\"PME dans la publicité à Paris\"*")
 
-        col1, col2 = st.columns([5, 1])
-        with col1:
-            natural_query = st.text_input(
-                "Votre recherche",
-                value=st.session_state.natural_query,
-                placeholder="Ex: Agences web en Île-de-France",
-                label_visibility="collapsed"
-            )
-        with col2:
-            parse_btn = st.button("🔍 Parser", use_container_width=True, type="primary")
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                natural_query = st.text_input(
+                    "Votre recherche",
+                    value=st.session_state.natural_query,
+                    placeholder="Ex: Agences web en Île-de-France",
+                    label_visibility="collapsed"
+                )
+            with col2:
+                parse_btn = st.button("🔍 Parser", use_container_width=True, type="primary")
 
-        if parse_btn and natural_query:
-            try:
-                with st.spinner("Analyse de votre requête..."):
-                    parser = QueryParser(codes_ape=codes_ape, departements=departements)
-                    filters = parser.parse(natural_query)
-                    st.session_state.parsed_filters = filters
-                    st.session_state.natural_query = natural_query
+            if parse_btn and natural_query:
+                try:
+                    with st.spinner("Analyse de votre requête..."):
+                        parser = QueryParser(codes_ape=codes_ape, departements=departements)
+                        filters = parser.parse(natural_query)
+                        st.session_state.parsed_filters = filters
+                        st.session_state.natural_query = natural_query
 
-                st.success(f"✅ {filters.get('interpretation', 'Filtres extraits avec succès')}")
+                    st.success(f"✅ {filters.get('interpretation', 'Filtres extraits avec succès')}")
 
-            except Exception as e:
-                st.error(f"❌ Erreur: {str(e)}")
-
-        st.divider()
+                except Exception as e:
+                    st.error(f"❌ Erreur: {str(e)}")
 
     # === Section 2: Filtres de recherche ===
     st.subheader("⚙️ Filtres de recherche")
@@ -212,7 +286,7 @@ with tab_main:
             "Effectif min",
             min_value=0,
             max_value=5000,
-            value=parsed.get('effectif_min', 0),
+            value=preset_filters.get('effectif_min', parsed.get('effectif_min', 50)),
             step=1
         )
 
@@ -221,7 +295,7 @@ with tab_main:
             "Effectif max",
             min_value=0,
             max_value=5000,
-            value=parsed.get('effectif_max', 5000),
+            value=preset_filters.get('effectif_max', parsed.get('effectif_max', 1000)),
             step=1
         )
 
@@ -246,9 +320,20 @@ with tab_main:
             "Max leads",
             min_value=1,
             max_value=MAX_RESULTS,
-            value=10,
-            step=1,
+            value=preset_filters.get('target_volume', 50),
+            step=10,
             help=f"Maximum {MAX_RESULTS}"
+        )
+
+    # Ligne 3: Segment à assigner
+    col1, col2 = st.columns(2)
+    with col1:
+        segment_options = [s['label'] for s in SEGMENTS.values()]
+        selected_segment = st.selectbox(
+            "Segment à assigner",
+            segment_options,
+            index=segment_options.index(selected_segment) if selected_segment in segment_options else 0,
+            help="Segment HubSpot pour les entreprises importées"
         )
 
     # === Section 3: Options (expander) ===
@@ -359,7 +444,7 @@ with tab_main:
                     max_results=max_leads
                 )
 
-            progress_bar.progress(30)
+            progress_bar.progress(25)
             update_log(f"✅ {len(companies)} entreprises trouvées")
 
             if not companies:
@@ -368,14 +453,69 @@ with tab_main:
                 status_text.text("Aucun résultat")
                 progress_bar.progress(100)
             else:
-                # Déduplication SQLite
-                if enable_deduplication:
+                # Classification ICP (A/B/C)
+                progress_bar.progress(30)
+                status_text.text("📊 Classification ICP...")
+                update_log("📊 Classification des prospects (A/B/C)...")
+
+                classifier = ProspectClassifier()
+                companies = classifier.classify_batch(companies)
+
+                # Stats de classification
+                stats = classifier.get_classification_stats(companies)
+                update_log(f"   🟢 A: {stats['by_class']['A']} | 🟡 B: {stats['by_class']['B']} | ⚪ C: {stats['by_class']['C']}")
+                update_log(f"   📈 Contacts attendus: ~{stats['expected_contacts']['total']}")
+
+                # Déduplication SQLite - séparer nouvelles vs existantes
+                if enable_deduplication and COMPANY_SCHEMA_AVAILABLE:
+                    progress_bar.progress(35)
+                    status_text.text("🔍 Comparaison avec la base...")
+                    update_log("🔍 Comparaison avec la base existante...")
+
+                    company_manager = CompanyManager()
+                    new_companies = []
+                    existing_companies = []
+
+                    for company in companies:
+                        siren = company.get('siren')
+                        if siren:
+                            existing = company_manager.find_by_siren(siren)
+                            if existing:
+                                # Ajouter les infos de l'entreprise existante
+                                company['_existing'] = True
+                                company['_existing_id'] = existing['id']
+                                company['_existing_segment'] = existing.get('segment')
+                                existing_companies.append(company)
+                            else:
+                                company['_existing'] = False
+                                new_companies.append(company)
+                        else:
+                            company['_existing'] = False
+                            new_companies.append(company)
+
+                    st.session_state.new_companies = new_companies
+                    st.session_state.existing_companies = existing_companies
+
+                    update_log(f"   ✨ {len(new_companies)} nouvelles | 📋 {len(existing_companies)} déjà en base")
+
+                    # Continuer avec les nouvelles uniquement pour l'enrichissement
+                    companies = new_companies
+
+                    if not companies and not existing_companies:
+                        update_log("⚠️ Aucune entreprise trouvée")
+                        st.session_state.extraction_status = 'done'
+                        status_text.text("Aucun résultat")
+                        progress_bar.progress(100)
+                elif enable_deduplication:
+                    # Ancien schéma
                     progress_bar.progress(35)
                     status_text.text("🔍 Filtrage des doublons...")
-                    update_log("🔍 Vérification des doublons...")
+                    update_log("🔍 Vérification des doublons (ancien schéma)...")
 
                     contact_manager = ContactManager()
                     companies, num_duplicates = contact_manager.filter_duplicates(companies)
+                    st.session_state.new_companies = companies
+                    st.session_state.existing_companies = []
 
                     if num_duplicates > 0:
                         update_log(f"⚠️ {num_duplicates} doublons filtrés")
@@ -385,6 +525,10 @@ with tab_main:
                         st.session_state.extraction_status = 'done'
                         status_text.text("Aucun nouveau lead")
                         progress_bar.progress(100)
+                else:
+                    # Pas de déduplication
+                    st.session_state.new_companies = companies
+                    st.session_state.existing_companies = []
 
                 if companies:
                     # Enrichissement Pappers
@@ -505,39 +649,114 @@ with tab_main:
             progress_bar.progress(0)
 
     # === Affichage des résultats ===
-    if st.session_state.extraction_status == 'done' and st.session_state.results:
-        results = st.session_state.results
+    if st.session_state.extraction_status == 'done' and (st.session_state.new_companies or st.session_state.existing_companies):
+        new_companies = st.session_state.new_companies
+        existing_companies = st.session_state.existing_companies
         export_files = st.session_state.export_files
 
         st.divider()
         st.subheader("📊 Résultats")
 
-        col1, col2, col3, col4 = st.columns(4)
+        # Métriques globales avec classification
+        all_companies = new_companies + existing_companies
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("Total leads", len(results))
+            st.metric("Total", len(all_companies))
         with col2:
-            with_email = sum(1 for r in results if r.get('email'))
-            st.metric("Avec email", with_email)
+            count_a = sum(1 for c in all_companies if c.get('prospect_class') == 'A')
+            st.metric("🟢 Classe A", count_a)
         with col3:
-            with_phone = sum(1 for r in results if r.get('telephone'))
-            st.metric("Avec téléphone", with_phone)
+            count_b = sum(1 for c in all_companies if c.get('prospect_class') == 'B')
+            st.metric("🟡 Classe B", count_b)
         with col4:
-            with_dirigeant = sum(1 for r in results if r.get('dirigeant_nom'))
-            st.metric("Avec dirigeant", with_dirigeant)
+            st.metric("✨ Nouvelles", len(new_companies))
+        with col5:
+            st.metric("📋 Déjà en base", len(existing_companies))
 
-        # Preview
-        st.subheader("📋 Aperçu")
-        df = pd.DataFrame(results)
+        # 2 Onglets: Nouvelles / Déjà en base
+        tab_new, tab_existing = st.tabs([
+            f"✨ Nouvelles ({len(new_companies)})",
+            f"📋 Déjà en base ({len(existing_companies)})"
+        ])
 
-        display_columns = [
-            'siren', 'denomination', 'ville', 'code_ape',
-            'dirigeant_nom', 'email', 'telephone'
-        ]
-        display_columns = [col for col in display_columns if col in df.columns]
+        with tab_new:
+            if new_companies:
+                st.caption(f"Entreprises à importer dans le segment: **{selected_segment}**")
 
-        st.dataframe(df[display_columns].head(10), use_container_width=True)
+                # Créer DataFrame avec colonnes appropriées
+                df_new = pd.DataFrame(new_companies)
+
+                # Ajouter colonne badge
+                if 'prospect_class' in df_new.columns:
+                    df_new['Classe'] = df_new['prospect_class'].apply(render_class_badge)
+
+                display_cols = ['Classe', 'siren', 'denomination', 'ville', 'code_ape']
+                if 'prospect_class_signals' in df_new.columns:
+                    df_new['Signaux'] = df_new['prospect_class_signals'].apply(
+                        lambda x: ', '.join(x) if isinstance(x, list) else str(x) if x else ''
+                    )
+                    display_cols.append('Signaux')
+
+                display_cols = [c for c in display_cols if c in df_new.columns]
+
+                st.dataframe(
+                    df_new[display_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # Bouton d'import
+                if COMPANY_SCHEMA_AVAILABLE:
+                    st.divider()
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    with col1:
+                        st.info(f"📥 Prêt à importer **{len(new_companies)}** entreprises dans le segment **{selected_segment}**")
+                    with col2:
+                        if st.button("✅ Importer tout", type="primary", use_container_width=True):
+                            try:
+                                company_manager = CompanyManager()
+                                segment_id = [k for k, v in SEGMENTS.items() if v['label'] == selected_segment][0]
+                                imported = 0
+                                for company in new_companies:
+                                    company_id = company_manager.create_company({
+                                        **company,
+                                        'segment': selected_segment,
+                                        'source': 'sirene',
+                                    })
+                                    # Classifier
+                                    company_manager.classify_company(company_id)
+                                    imported += 1
+                                st.success(f"✅ {imported} entreprises importées!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Erreur: {e}")
+            else:
+                st.info("Aucune nouvelle entreprise trouvée")
+
+        with tab_existing:
+            if existing_companies:
+                st.caption("Ces entreprises sont déjà dans votre base")
+
+                df_existing = pd.DataFrame(existing_companies)
+
+                if 'prospect_class' in df_existing.columns:
+                    df_existing['Classe'] = df_existing['prospect_class'].apply(render_class_badge)
+
+                display_cols = ['Classe', 'siren', 'denomination', 'ville', '_existing_segment']
+                df_existing = df_existing.rename(columns={'_existing_segment': 'Segment actuel'})
+                display_cols = [c.replace('_existing_segment', 'Segment actuel') for c in display_cols]
+                display_cols = [c for c in display_cols if c in df_existing.columns]
+
+                st.dataframe(
+                    df_existing[display_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Aucune entreprise existante correspondante")
 
         # Téléchargements
+        st.divider()
         st.subheader("💾 Téléchargements")
 
         cols = st.columns(3)
