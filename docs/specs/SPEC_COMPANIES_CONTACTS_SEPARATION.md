@@ -154,7 +154,7 @@ CREATE TABLE contacts (
 
     -- GetSales specifique
     getsales_campaign_id TEXT,
-    getsales_flow_id TEXT,
+    getsales_flow_uuid TEXT,  -- UUID de la campagne/flow GetSales (cohérent avec sync_service)
 
     -- === SYNC HUBSPOT ===
     synced_to_hubspot INTEGER DEFAULT 0,
@@ -803,8 +803,364 @@ UPDATE contacts SET status = 'archived' WHERE id = old_id;
 
 ---
 
+## 🔨 Tâches d'implémentation détaillées
+
+### Phase 1: Migration base de données
+
+#### 1.1 Scripts SQL de création
+
+**Fichier: `migrations/001_create_companies.sql`**
+```sql
+-- Créer table companies selon schéma spec
+CREATE TABLE IF NOT EXISTS companies (...);
+-- Index et contraintes
+```
+
+**Fichier: `migrations/002_create_contacts_new.sql`**
+```sql
+-- Créer table contacts_new selon schéma spec
+CREATE TABLE IF NOT EXISTS contacts_new (...);
+-- Index et contraintes
+```
+
+#### 1.2 Script de migration Python
+
+**Fichier: `scripts/migrate_unified_to_companies_contacts.py`**
+
+Tâches:
+- [ ] Extraire entreprises uniques depuis `unified_contacts` (GROUP BY siren, company_name)
+- [ ] Générer UUIDs pour chaque company
+- [ ] Insérer dans `companies`
+- [ ] Mapper chaque contact à son `company_id`
+- [ ] Gérer les contacts sans SIREN (match par company_name + website)
+- [ ] Migrer vers `contacts_new` avec FK vers companies
+- [ ] Calculer `total_contacts` pour chaque company
+
+#### 1.3 Script de vérification
+
+**Fichier: `scripts/verify_migration.py`**
+
+Vérifications:
+- [ ] Nombre total contacts = avant migration
+- [ ] Pas de SIREN dupliqués dans companies
+- [ ] Intégrité FK (tous les company_id existent)
+- [ ] Unicité email/linkedin préservée
+
+---
+
+### Phase 2: Nouveau module CompanyManager
+
+**Fichier: `modules/lead_scraper/company_manager.py`**
+
+```python
+class CompanyManager:
+    """Gestionnaire des entreprises."""
+
+    def __init__(self, db_path: str = None):
+        ...
+
+    # CRUD
+    def create_company(self, data: dict) -> int
+    def get_company(self, company_id: int) -> dict
+    def update_company(self, company_id: int, data: dict) -> bool
+    def delete_company(self, company_id: int, hard_delete: bool = False) -> bool
+
+    # Recherche
+    def find_by_siren(self, siren: str) -> Optional[dict]
+    def find_by_website(self, website: str) -> Optional[dict]
+    def find_by_name_fuzzy(self, name: str, threshold: float = 0.85) -> List[dict]
+    def search(self, query: str = None, **filters) -> List[dict]
+
+    # Matching intelligent (pour GetSales)
+    def find_or_create_company(self, lead_data: dict) -> int:
+        """
+        Matching hiérarchique:
+        1. Par website/domain
+        2. Par SIREN (via Pappers si dispo)
+        3. Par nom fuzzy
+        4. Création si non trouvé
+        """
+
+    # Fusion
+    def merge_companies(self, company_id_keep: int, company_id_merge: int) -> bool:
+        """Fusionne company_merge dans company_keep, migre les contacts."""
+
+    # Stats
+    def update_company_stats(self, company_id: int):
+        """Recalcule total_contacts, messages_sent, etc."""
+
+    def get_companies_with_contacts_count(self, limit: int = 100) -> List[dict]
+```
+
+Tâches:
+- [ ] Créer classe `CompanyManager`
+- [ ] Implémenter CRUD de base
+- [ ] Implémenter `find_by_*` methods
+- [ ] Implémenter `find_or_create_company` avec matching hiérarchique
+- [ ] Implémenter `merge_companies`
+- [ ] Implémenter `update_company_stats`
+- [ ] Tests unitaires
+
+---
+
+### Phase 3: Adaptation ContactManager
+
+**Fichier: `modules/lead_scraper/contact_manager.py`**
+
+Modifications:
+- [ ] Changer table `unified_contacts` → `contacts`
+- [ ] Ajouter paramètre `company_id` à `add_contact()`
+- [ ] Ajouter méthode `get_contacts_by_company(company_id: int)`
+- [ ] Ajouter méthode `link_contact_to_company(contact_id, company_id)`
+- [ ] Modifier `search()` pour supporter filtre par company_id
+- [ ] Modifier `find_duplicate()` pour chercher par company_id aussi
+- [ ] Supprimer champs entreprise du modèle contact (siren, company_name, etc.)
+- [ ] Créer vue `unified_contacts_legacy` pour compatibilité temporaire
+- [ ] Tests unitaires
+
+---
+
+### Phase 4: Adaptation GetSalesSyncService
+
+**Fichier: `modules/getsales/sync_service.py`**
+
+Modifications à `_create_hubspot_contact()`:
+- [ ] Appeler `CompanyManager.find_or_create_company(getsales_data)`
+- [ ] Créer/trouver company locale AVANT push HubSpot
+- [ ] Stocker `company_id` dans contact local
+- [ ] Sync company vers HubSpot (si pas existante)
+- [ ] Lier contact local à company locale
+
+Nouvelles méthodes:
+```python
+def _find_or_create_local_company(self, getsales_data: dict) -> int:
+    """
+    Utilise CompanyManager pour:
+    1. Chercher par domain
+    2. Chercher par SIREN (enrichissement Pappers)
+    3. Chercher par nom fuzzy
+    4. Créer si non trouvé
+    """
+
+def _sync_company_to_hubspot(self, company_id: int) -> str:
+    """
+    Sync company locale vers HubSpot si pas déjà sync.
+    Retourne hubspot_company_id.
+    """
+```
+
+Modification workflow `validate_lead()`:
+```python
+# Avant (actuel)
+contact = self._create_hubspot_contact(getsales_data)
+
+# Après
+company_id = self._find_or_create_local_company(getsales_data)
+hubspot_company_id = self._sync_company_to_hubspot(company_id)
+contact = self._create_hubspot_contact(getsales_data, company_id, hubspot_company_id)
+```
+
+Tâches:
+- [ ] Ajouter dépendance CompanyManager
+- [ ] Implémenter `_find_or_create_local_company()`
+- [ ] Implémenter `_sync_company_to_hubspot()`
+- [ ] Modifier `_create_hubspot_contact()` pour prendre company_id
+- [ ] Modifier `validate_lead()` workflow
+- [ ] Mettre à jour stockage pending_lead (ajouter company_matches enrichis)
+- [ ] Tests intégration
+
+---
+
+### Phase 5: Adaptation HubSpotClient
+
+**Fichier: `modules/lead_scraper/hubspot_client.py`**
+
+Nouvelles méthodes:
+```python
+def create_company(self, properties: dict) -> dict:
+    """Crée une company HubSpot."""
+
+def update_company(self, company_id: str, properties: dict) -> dict:
+    """Met à jour une company HubSpot."""
+
+def get_company(self, company_id: str) -> dict:
+    """Récupère une company HubSpot."""
+
+def search_company(self, name: str = None, domain: str = None) -> Optional[dict]:
+    """Cherche une company par nom ou domaine."""
+
+def get_or_create_company(self, name: str, domain: str = None, **props) -> dict:
+    """Trouve ou crée une company HubSpot."""
+
+def associate_contact_company(self, contact_id: str, company_id: str) -> bool:
+    """Associe un contact à une company."""
+
+def sync_companies_batch(self, companies: List[dict]) -> dict:
+    """Sync batch de companies vers HubSpot."""
+```
+
+Mapping company → HubSpot:
+```python
+COMPANY_FIELD_MAPPING = {
+    'company_name': 'name',
+    'website': 'domain',
+    'employee_range': 'numberofemployees',
+    'revenue_range': 'annualrevenue',
+    'address': 'address',
+    'city': 'city',
+    'postal_code': 'zip',
+    'country': 'country',
+    'siren': 'siren',  # custom property
+    'siret_list': 'siret_list',  # custom property
+    'ape_code': 'code_ape',  # custom property
+}
+```
+
+Tâches:
+- [ ] Implémenter `create_company()`
+- [ ] Implémenter `update_company()`
+- [ ] Implémenter `search_company()`
+- [ ] Implémenter `get_or_create_company()`
+- [ ] Implémenter `associate_contact_company()`
+- [ ] Implémenter `sync_companies_batch()`
+- [ ] Ajouter COMPANY_FIELD_MAPPING
+- [ ] Créer propriétés custom HubSpot (siren, siret_list, code_ape)
+- [ ] Tests
+
+---
+
+### Phase 6: Adaptation pages Streamlit
+
+#### 6.1 Page Recherche SIRENE (`pages/2_🔍_Recherche_Leads.py`)
+
+Modifications:
+- [ ] Recherche crée des **companies** (pas contacts)
+- [ ] Afficher résultats comme entreprises
+- [ ] Bouton "Enrichir dirigeants" par entreprise
+- [ ] Enrichissement → crée contacts liés à company_id
+- [ ] Stocker `company_id` créé dans session pour suivi
+
+Nouveau workflow:
+```
+1. Recherche Pappers → 50 résultats
+2. INSERT INTO companies (sans contacts)
+3. Afficher table entreprises
+4. User sélectionne entreprises à enrichir
+5. Bouton "Enrichir dirigeants"
+6. API Pappers dirigeants → INSERT contacts avec company_id
+7. UPDATE companies SET enriched_at, total_contacts
+```
+
+#### 6.2 Page Base de Leads (`pages/3_📜_Base_de_Leads.py`)
+
+Renommer → **Base Contacts & Entreprises**
+
+Modifications:
+- [ ] Ajouter onglets: "Entreprises" | "Contacts"
+- [ ] Onglet Entreprises:
+  - Table companies avec colonnes: nom, siren, ville, nb_contacts, statut_prospection
+  - Bouton "Voir contacts" → filtre contacts par company_id
+  - Bouton "Enrichir" → Pappers dirigeants
+  - Bouton "Sync HubSpot"
+- [ ] Onglet Contacts:
+  - Table contacts avec colonne "Entreprise" (lien vers company)
+  - Filtres: par entreprise, par source, par statut
+  - Édition contact avec autocomplete entreprise
+- [ ] Statistiques séparées: X entreprises, Y contacts
+
+#### 6.3 Page GetSales Sync (`pages/4_🔄_GetSales_Sync.py`)
+
+Modifications:
+- [ ] Afficher company_matches dans UI validation
+- [ ] Radio buttons: "Utiliser entreprise existante" / "Créer nouvelle"
+- [ ] Si entreprise existante: dropdown avec matches
+- [ ] Si nouvelle: afficher aperçu données company
+- [ ] Après validation: afficher "Contact [X] créé pour entreprise [Y]"
+
+Nouveau workflow UI:
+```
+Pending Lead: Jean Dupont @ Leboncoin
+
+🏢 Entreprise détectée:
+○ Créer nouvelle entreprise "Leboncoin"
+● Utiliser existante:
+   ▼ Leboncoin (ID: 15, SIREN: 521016632) ⭐ Match exact
+     Leboncoin SAS (ID: 89) - Match fuzzy 92%
+
+[Valider] [Rejeter]
+```
+
+---
+
+### Phase 7: Adaptation DeduplicationMatcher
+
+**Fichier: `modules/deduplication/matcher.py`**
+
+Modifications:
+- [ ] Ajouter recherche dans table `companies`
+- [ ] Nouvelle méthode `find_company_matches()`
+- [ ] Retourner company_id dans résultats contact
+
+```python
+def find_company_matches(
+    self,
+    company_name: str = None,
+    website: str = None,
+    siren: str = None
+) -> List[CompanyMatchResult]:
+    """
+    Trouve entreprises correspondantes.
+    Utilisé par GetSalesSyncService.
+    """
+```
+
+---
+
+### Phase 8: Tests et validation
+
+#### 8.1 Tests unitaires
+
+- [ ] `test_company_manager.py` - CRUD, recherche, fusion
+- [ ] `test_contact_manager_v2.py` - Avec company_id
+- [ ] `test_hubspot_companies.py` - Sync companies
+- [ ] `test_getsales_with_companies.py` - Workflow complet
+
+#### 8.2 Tests intégration
+
+- [ ] Scénario: Import SIRENE → Enrichir → Sync HubSpot
+- [ ] Scénario: GetSales import → Matching company → Sync
+- [ ] Scénario: Création contact manuel → Lier à company
+
+#### 8.3 Tests migration
+
+- [ ] Migration sur copie prod
+- [ ] Vérification intégrité données
+- [ ] Test rollback
+
+---
+
+### Résumé checklist par fichier
+
+| Fichier | Action | Priorité |
+|---------|--------|----------|
+| `migrations/001_create_companies.sql` | Créer | P1 |
+| `migrations/002_create_contacts_new.sql` | Créer | P1 |
+| `scripts/migrate_unified_to_companies_contacts.py` | Créer | P1 |
+| `scripts/verify_migration.py` | Créer | P1 |
+| `modules/lead_scraper/company_manager.py` | Créer | P1 |
+| `modules/lead_scraper/contact_manager.py` | Modifier | P1 |
+| `modules/getsales/sync_service.py` | Modifier | P2 |
+| `modules/lead_scraper/hubspot_client.py` | Modifier | P2 |
+| `modules/deduplication/matcher.py` | Modifier | P2 |
+| `pages/2_🔍_Recherche_Leads.py` | Modifier | P3 |
+| `pages/3_📜_Base_de_Leads.py` | Modifier | P3 |
+| `pages/4_🔄_GetSales_Sync.py` | Modifier | P3 |
+
+---
+
 ## ✍️ Changelog
 
 | Date | Version | Changements |
 |------|---------|-------------|
 | 2025-12-21 | 1.0 | Spec initiale |
+| 2025-12-21 | 1.1 | Ajout tâches d'implémentation détaillées, correction `getsales_flow_id` → `getsales_flow_uuid` |
