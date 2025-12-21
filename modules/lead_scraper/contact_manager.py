@@ -935,6 +935,101 @@ class ContactManager:
             url = url.replace('http://', 'https://')
         return url
 
+    # =========================================================================
+    # DEDUPLICATION HELPERS (pour Import CSV v2)
+    # =========================================================================
+
+    def get_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """
+        Trouve un contact par email exact.
+
+        Args:
+            email: Email à chercher
+
+        Returns:
+            Contact ou None
+        """
+        if not email:
+            return None
+
+        email_lower = email.lower().strip()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            table = self._get_table_name()
+            cursor.execute(
+                f"SELECT * FROM {table} WHERE LOWER(email) = ? AND contact_status = 'active' LIMIT 1",
+                (email_lower,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_by_phone(self, phone: str) -> Optional[Dict[str, Any]]:
+        """
+        Trouve un contact par téléphone.
+
+        Args:
+            phone: Téléphone à chercher (sera normalisé)
+
+        Returns:
+            Contact ou None
+        """
+        if not phone:
+            return None
+
+        # Normaliser: garder seulement les chiffres
+        digits = ''.join(c for c in phone if c.isdigit())
+        if len(digits) < 9:
+            return None
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            table = self._get_table_name()
+            # Rechercher par les derniers 9 chiffres (ignore préfixe international)
+            cursor.execute(f"""
+                SELECT * FROM {table}
+                WHERE contact_status = 'active'
+                AND (
+                    REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '.', '') LIKE ?
+                    OR REPLACE(REPLACE(REPLACE(mobile, ' ', ''), '-', ''), '.', '') LIKE ?
+                )
+                LIMIT 1
+            """, (f"%{digits[-9:]}", f"%{digits[-9:]}"))
+
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_by_linkedin(self, linkedin_url: str) -> Optional[Dict[str, Any]]:
+        """
+        Trouve un contact par URL LinkedIn.
+
+        Args:
+            linkedin_url: URL LinkedIn
+
+        Returns:
+            Contact ou None
+        """
+        if not linkedin_url:
+            return None
+
+        normalized = self._normalize_linkedin_url(linkedin_url)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            table = self._get_table_name()
+            cursor.execute(
+                f"SELECT * FROM {table} WHERE linkedin_url = ? AND contact_status = 'active' LIMIT 1",
+                (normalized,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def get_duplicates_batch(self, sirens: List[str]) -> Set[str]:
         """
         Trouve tous les SIREN déjà présents.

@@ -329,6 +329,31 @@ class CompanyManager:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def get_by_domain(self, email_or_domain: str) -> Optional[Dict[str, Any]]:
+        """
+        Trouve une entreprise par domaine email.
+
+        Args:
+            email_or_domain: Email (extrait domaine) ou domaine direct
+
+        Returns:
+            Entreprise ou None
+        """
+        if not email_or_domain:
+            return None
+
+        # Extraire le domaine si c'est un email
+        if '@' in email_or_domain:
+            domain = email_or_domain.split('@')[1].lower().strip()
+        else:
+            domain = self._normalize_domain(email_or_domain)
+
+        if not domain or domain in ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'orange.fr', 'free.fr', 'sfr.fr']:
+            return None  # Ignorer les domaines génériques
+
+        # Chercher par website ou company_email
+        return self.find_by_website(domain)
+
     def find_by_name_exact(self, company_name: str) -> Optional[Dict[str, Any]]:
         """Trouve une entreprise par nom exact (case insensitive)."""
         if not company_name:

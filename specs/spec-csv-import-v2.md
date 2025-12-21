@@ -1,13 +1,17 @@
-# Spec: Import CSV v2 - Workflow unifié GetSales
+# Spec: Page Import Unifiée (GetSales + CSV)
 
 ## Contexte
 
 L'import CSV actuel est basique : il importe directement sans vérifier les doublons entreprise ni proposer de liaison avec les données existantes.
 
-L'objectif est d'unifier l'expérience avec GetSales qui propose :
+L'objectif est de créer une **page dédiée Import** avec 2 onglets :
+- **Import GetSales** : import depuis l'API GetSales (existant à migrer)
+- **Import CSV** : import fichiers CSV avec workflow amélioré
+
+Les 2 onglets partagent le même workflow :
 1. Détection des entreprises existantes
 2. Choix : lier à l'existant ou créer nouveau
-3. Sync HubSpot avec les bonnes propriétés
+3. Sync HubSpot avec les propriétés (déjà configurées via GetSales)
 
 ---
 

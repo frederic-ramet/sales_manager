@@ -477,3 +477,172 @@ class CSVImporter:
             'mapped_columns': len(self.mapping),
             'unmapped_columns': len(self.get_unmapped_columns())
         }
+
+    def analyze_duplicates(
+        self,
+        company_manager,
+        contact_manager
+    ) -> Dict[str, Any]:
+        """
+        Analyse les doublons entreprise/contact pour chaque ligne du CSV.
+
+        Retourne pour chaque ligne:
+        - company_match: entreprise existante trouvée (ou None)
+        - company_match_type: type de match ('siren', 'name_exact', 'name_fuzzy', 'domain')
+        - company_match_score: score de confiance (0-100)
+        - contact_match: contact existant trouvé (ou None)
+        - contact_match_type: type de match ('email', 'linkedin', 'phone', 'name')
+        - action: action suggérée ('create', 'link', 'update', 'ignore')
+
+        Args:
+            company_manager: Instance de CompanyManager
+            contact_manager: Instance de ContactManager
+
+        Returns:
+            Dict avec:
+            - rows: liste de dicts avec infos de matching par ligne
+            - stats: statistiques globales
+        """
+        if self.df is None or not self.mapping:
+            raise ValueError("Appelez parse() et configurez le mapping d'abord")
+
+        rows_analysis = []
+        stats = {
+            'total': len(self.df),
+            'new_companies': 0,
+            'existing_companies': 0,
+            'new_contacts': 0,
+            'existing_contacts': 0,
+        }
+
+        for idx, row in self.df.iterrows():
+            # Extraire les données selon le mapping
+            row_data = {}
+            for target, source in self.mapping.items():
+                value = row.get(source, '')
+                if value and str(value).strip():
+                    row_data[target] = str(value).strip()
+
+            analysis = {
+                'row_index': idx,
+                'row_data': row_data,
+                'company_match': None,
+                'company_match_type': None,
+                'company_match_score': 0,
+                'contact_match': None,
+                'contact_match_type': None,
+                'contact_match_score': 0,
+                'action': 'create',  # Par défaut
+                'selected': True,  # Sélectionné par défaut
+            }
+
+            # =============================
+            # 1. MATCHING ENTREPRISE
+            # =============================
+
+            company_name = row_data.get('company_name', '')
+            siren = row_data.get('siren', '')
+            email = row_data.get('email', '')
+
+            # 1a. Par SIREN (100%)
+            if siren:
+                company = company_manager.find_by_siren(siren)
+                if company:
+                    analysis['company_match'] = company
+                    analysis['company_match_type'] = 'siren'
+                    analysis['company_match_score'] = 100
+
+            # 1b. Par nom exact (95%)
+            if not analysis['company_match'] and company_name:
+                company = company_manager.find_by_name_exact(company_name)
+                if company:
+                    analysis['company_match'] = company
+                    analysis['company_match_type'] = 'name_exact'
+                    analysis['company_match_score'] = 95
+
+            # 1c. Par nom fuzzy (>85%)
+            if not analysis['company_match'] and company_name:
+                fuzzy_matches = company_manager.find_by_name_fuzzy(company_name, threshold=0.85, limit=1)
+                if fuzzy_matches:
+                    best = fuzzy_matches[0]
+                    analysis['company_match'] = best['company']
+                    analysis['company_match_type'] = 'name_fuzzy'
+                    analysis['company_match_score'] = int(best['similarity_score'] * 100)
+
+            # 1d. Par domaine email (70%)
+            if not analysis['company_match'] and email and '@' in email:
+                company = company_manager.get_by_domain(email)
+                if company:
+                    analysis['company_match'] = company
+                    analysis['company_match_type'] = 'domain'
+                    analysis['company_match_score'] = 70
+
+            # =============================
+            # 2. MATCHING CONTACT
+            # =============================
+
+            linkedin_url = row_data.get('linkedin_url', '')
+            phone = row_data.get('phone', '')
+            firstname = row_data.get('firstname', '')
+            lastname = row_data.get('lastname', '')
+
+            # 2a. Par email (100%)
+            if email:
+                contact = contact_manager.get_by_email(email)
+                if contact:
+                    analysis['contact_match'] = contact
+                    analysis['contact_match_type'] = 'email'
+                    analysis['contact_match_score'] = 100
+
+            # 2b. Par LinkedIn (100%)
+            if not analysis['contact_match'] and linkedin_url:
+                contact = contact_manager.get_by_linkedin(linkedin_url)
+                if contact:
+                    analysis['contact_match'] = contact
+                    analysis['contact_match_type'] = 'linkedin'
+                    analysis['contact_match_score'] = 100
+
+            # 2c. Par téléphone (85%)
+            if not analysis['contact_match'] and phone:
+                contact = contact_manager.get_by_phone(phone)
+                if contact:
+                    analysis['contact_match'] = contact
+                    analysis['contact_match_type'] = 'phone'
+                    analysis['contact_match_score'] = 85
+
+            # 2d. Par nom + prénom + entreprise (90%)
+            if not analysis['contact_match'] and firstname and lastname and analysis['company_match']:
+                company_id = analysis['company_match'].get('id')
+                if company_id:
+                    contacts = contact_manager.get_contacts_by_company(company_id, limit=100)
+                    for c in contacts:
+                        if (c.get('firstname', '').lower() == firstname.lower() and
+                                c.get('lastname', '').lower() == lastname.lower()):
+                            analysis['contact_match'] = c
+                            analysis['contact_match_type'] = 'name_company'
+                            analysis['contact_match_score'] = 90
+                            break
+
+            # =============================
+            # 3. DÉTERMINER L'ACTION
+            # =============================
+
+            if analysis['company_match']:
+                stats['existing_companies'] += 1
+                if analysis['contact_match']:
+                    stats['existing_contacts'] += 1
+                    analysis['action'] = 'update'  # Mise à jour
+                else:
+                    stats['new_contacts'] += 1
+                    analysis['action'] = 'link'  # Lier à entreprise existante
+            else:
+                stats['new_companies'] += 1
+                stats['new_contacts'] += 1
+                analysis['action'] = 'create'  # Créer tout
+
+            rows_analysis.append(analysis)
+
+        return {
+            'rows': rows_analysis,
+            'stats': stats
+        }
