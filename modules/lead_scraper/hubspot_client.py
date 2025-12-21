@@ -1287,6 +1287,11 @@ class HubSpotClient:
             'effectif': ['effectif', 'employee_range'],
             'chiffre_affaires': ['chiffre_affaires', 'revenue_range'],
             'linkedin_url': ['linkedin_url', 'linkedin'],
+            'hs_linkedin_url': ['hs_linkedin_url', 'linkedin_url', 'linkedin'],
+            # Attribution HubSpot
+            'hs_analytics_source': ['hs_analytics_source'],
+            'hs_analytics_source_data_1': ['hs_analytics_source_data_1'],
+            'hs_analytics_source_data_2': ['hs_analytics_source_data_2'],
             'import_source': ['import_source'],
             'import_notes': ['import_notes', 'notes'],
             'getsales_uuid': ['getsales_uuid'],
