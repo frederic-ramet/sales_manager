@@ -59,13 +59,91 @@ class HubSpotClient:
     # Propriétés standard HubSpot (toujours disponibles)
     STANDARD_PROPERTIES = [
         "firstname", "lastname", "email", "phone", "company",
-        "jobtitle", "city", "address", "zip", "hs_object_id", "createdate"
+        "jobtitle", "city", "address", "zip", "hs_object_id", "createdate",
+        "website", "mobilephone", "country"
     ]
 
-    # Propriétés personnalisées (peuvent ne pas exister)
+    # Propriétés personnalisées (peuvent ne pas exister - seront créées automatiquement)
     CUSTOM_PROPERTIES = [
-        "siren", "code_ape", "effectif", "chiffre_affaires"
+        "siren", "siret", "code_ape", "effectif", "chiffre_affaires",
+        "linkedin_url", "import_source", "import_notes", "getsales_uuid"
     ]
+
+    # Définitions des propriétés custom à créer
+    CUSTOM_PROPERTIES_DEFINITIONS = {
+        "siren": {
+            "name": "siren",
+            "label": "SIREN",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Numéro SIREN de l'entreprise"
+        },
+        "siret": {
+            "name": "siret",
+            "label": "SIRET",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Numéro SIRET de l'établissement"
+        },
+        "code_ape": {
+            "name": "code_ape",
+            "label": "Code APE/NAF",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Code APE/NAF du secteur d'activité"
+        },
+        "effectif": {
+            "name": "effectif",
+            "label": "Effectif",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Tranche d'effectif de l'entreprise"
+        },
+        "chiffre_affaires": {
+            "name": "chiffre_affaires",
+            "label": "Chiffre d'affaires",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Chiffre d'affaires de l'entreprise"
+        },
+        "linkedin_url": {
+            "name": "linkedin_url",
+            "label": "LinkedIn URL",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "URL du profil LinkedIn"
+        },
+        "import_source": {
+            "name": "import_source",
+            "label": "Source d'import",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Source de l'import (SIRENE, CSV, GetSales...)"
+        },
+        "import_notes": {
+            "name": "import_notes",
+            "label": "Notes d'import",
+            "type": "string",
+            "fieldType": "textarea",
+            "groupName": "contactinformation",
+            "description": "Notes et commentaires de l'import"
+        },
+        "getsales_uuid": {
+            "name": "getsales_uuid",
+            "label": "GetSales UUID",
+            "type": "string",
+            "fieldType": "text",
+            "groupName": "contactinformation",
+            "description": "Identifiant GetSales du contact"
+        },
+    }
 
     # Toutes les propriétés (pour compatibilité)
     SYNC_PROPERTIES = STANDARD_PROPERTIES + CUSTOM_PROPERTIES
@@ -640,20 +718,30 @@ class HubSpotClient:
 
         return {"updated": updated, "errors": errors}
 
-    def push_contacts(self, contacts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def push_contacts(self, contacts: List[Dict[str, Any]], auto_create_properties: bool = True) -> Dict[str, Any]:
         """
         Envoie des contacts vers HubSpot (création batch).
 
         Args:
             contacts: Liste de contacts à créer
+            auto_create_properties: Si True, crée automatiquement les propriétés custom manquantes
 
         Returns:
-            Dict avec résultats (created, errors)
+            Dict avec résultats (created, errors, properties_created)
         """
         if not contacts:
-            return {"created": 0, "errors": []}
+            return {"created": 0, "errors": [], "properties_created": []}
 
         logger.info(f"Push de {len(contacts)} contacts vers HubSpot...")
+
+        # S'assurer que les propriétés custom existent
+        properties_result = {"created": [], "failed": []}
+        if auto_create_properties:
+            properties_result = self.ensure_custom_properties()
+            if properties_result["failed"]:
+                logger.warning(
+                    f"Certaines propriétés n'ont pas pu être créées: {properties_result['failed']}"
+                )
 
         created = 0
         errors = []
@@ -689,7 +777,11 @@ class HubSpotClient:
 
         logger.info(f"Push terminé: {created} créés, {len(errors)} erreurs")
 
-        return {"created": created, "errors": errors}
+        return {
+            "created": created,
+            "errors": errors,
+            "properties_created": properties_result.get("created", [])
+        }
 
     def _map_properties(self, contact: Dict[str, Any]) -> Dict[str, str]:
         """
@@ -790,3 +882,117 @@ class HubSpotClient:
 
         except Exception as e:
             logger.error(f"Erreur mise à jour miroir: {e}")
+
+    def get_existing_properties(self) -> Set[str]:
+        """
+        Récupère la liste des propriétés contact existantes dans HubSpot.
+
+        Returns:
+            Set des noms de propriétés existantes
+        """
+        properties = set()
+        after = None
+
+        try:
+            while True:
+                self._handle_rate_limit()
+
+                params = {"limit": 100}
+                if after:
+                    params["after"] = after
+
+                response = self.client.get(
+                    "/crm/v3/properties/contacts",
+                    params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                for prop in data.get("results", []):
+                    properties.add(prop.get("name"))
+
+                paging = data.get("paging", {})
+                if "next" in paging:
+                    after = paging["next"]["after"]
+                else:
+                    break
+
+            logger.info(f"Propriétés HubSpot existantes: {len(properties)}")
+            return properties
+
+        except Exception as e:
+            logger.error(f"Erreur récupération propriétés: {e}")
+            return set()
+
+    def create_property(self, property_definition: Dict[str, Any]) -> bool:
+        """
+        Crée une propriété custom dans HubSpot.
+
+        Args:
+            property_definition: Dict avec name, label, type, fieldType, groupName, description
+
+        Returns:
+            True si créé avec succès, False sinon
+        """
+        try:
+            self._handle_rate_limit()
+
+            response = self.client.post(
+                "/crm/v3/properties/contacts",
+                json=property_definition
+            )
+            response.raise_for_status()
+
+            logger.info(f"Propriété '{property_definition['name']}' créée avec succès")
+            return True
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 409:
+                # Propriété existe déjà
+                logger.debug(f"Propriété '{property_definition['name']}' existe déjà")
+                return True
+            else:
+                logger.error(
+                    f"Erreur création propriété '{property_definition['name']}': "
+                    f"HTTP {e.response.status_code} - {e.response.text}"
+                )
+                return False
+        except Exception as e:
+            logger.error(f"Erreur création propriété '{property_definition['name']}': {e}")
+            return False
+
+    def ensure_custom_properties(self) -> Dict[str, Any]:
+        """
+        S'assure que toutes les propriétés custom nécessaires existent dans HubSpot.
+        Crée celles qui manquent.
+
+        Returns:
+            Dict avec résultats (existing, created, failed)
+        """
+        logger.info("Vérification des propriétés custom HubSpot...")
+
+        existing_props = self.get_existing_properties()
+
+        results = {
+            "existing": [],
+            "created": [],
+            "failed": []
+        }
+
+        for prop_name, prop_def in self.CUSTOM_PROPERTIES_DEFINITIONS.items():
+            if prop_name in existing_props:
+                results["existing"].append(prop_name)
+                logger.debug(f"Propriété '{prop_name}' existe déjà")
+            else:
+                logger.info(f"Création de la propriété '{prop_name}'...")
+                if self.create_property(prop_def):
+                    results["created"].append(prop_name)
+                else:
+                    results["failed"].append(prop_name)
+
+        logger.info(
+            f"Propriétés custom: {len(results['existing'])} existantes, "
+            f"{len(results['created'])} créées, {len(results['failed'])} échouées"
+        )
+
+        return results
