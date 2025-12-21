@@ -46,25 +46,20 @@ ALTER TABLE companies ADD COLUMN segment TEXT;
 -- Valeurs: 'icp_principal', 'icp_opportuniste', 'test', 'custom'
 ```
 
-### 2.2 Nouveau scoring ICP (remplace/complète l'existant)
+### 2.2 Système de scoring double
 
 **Fichier:** `modules/lead_scraper/scoring.py`
 
-```python
-class ICPScorer:
-    """Score les entreprises selon critères GenieFactory"""
+#### A. ProspectClassifier (A/B/C) - Classification ICP
 
-    # Segments ICP
-    SEGMENTS = {
-        'icp_principal': {
-            'effectif_range': (50, 1000),
-            'label': 'ICP Principal',
-        },
-        'icp_opportuniste': {
-            'effectif_range': (50, 300),
-            'label': 'ICP Opportuniste',
-        }
-    }
+```python
+class ProspectClassifier:
+    """
+    Classifie les prospects selon critères ICP métier.
+
+    Utilisé AVANT contact pour prioriser les entreprises à prospecter.
+    A = ultra-qualifié, B = volume, C = opportuniste
+    """
 
     # Codes APE prioritaires par groupe
     APE_GROUPS = {
@@ -87,13 +82,13 @@ class ICPScorer:
     # Départements IDF
     IDF_CODES = ["75", "92", "93", "94", "95", "77", "78", "91"]
 
-    def score_company(self, company: dict) -> dict:
+    def classify(self, company: dict) -> dict:
         """
         Retourne: {
-            'score': 'A+' | 'B' | 'C',
+            'prospect_class': 'A' | 'B' | 'C',
             'points': int (0-100),
             'signals': list[str],
-            'contact_probability': float
+            'expected_contact_rate': float
         }
         """
         points = 0
@@ -103,46 +98,59 @@ class ICPScorer:
         effectif = self._parse_effectif(company.get('employee_range'))
         if effectif and 50 <= effectif <= 1000:
             points += 20
-            signals.append(f"Effectif {effectif} (ICP range)")
+            signals.append(f"Effectif {effectif} (ICP)")
 
-        # 2. CA > 10M€ (20 pts) - si enrichi
-        ca = company.get('revenue_range')
-        if self._ca_above(ca, 10_000_000):
+        # 2. CA > 10M€ (20 pts)
+        if self._ca_above(company.get('revenue_range'), 10_000_000):
             points += 20
             signals.append("CA > 10M€")
 
         # 3. Secteur prioritaire (15 pts)
-        ape = company.get('ape_code')
-        if self._is_priority_ape(ape):
+        if self._is_priority_ape(company.get('ape_code')):
             points += 15
             signals.append("Secteur prioritaire")
 
         # 4. IDF (15 pts)
-        postal = company.get('postal_code', '')[:2]
-        if postal in self.IDF_CODES:
+        if company.get('postal_code', '')[:2] in self.IDF_CODES:
             points += 15
             signals.append("IDF")
 
-        # 5. Croissance effectif > 20% (30 pts) - si data historique
-        # TODO: Implémenter avec Pappers historique
+        # 5. Croissance effectif > 20% (30 pts) - TODO avec Pappers
 
-        # Scoring final
+        # Classification
         if points >= 70:
-            score = 'A+'
-            contact_prob = 0.40
+            return {'prospect_class': 'A', 'points': points, 'signals': signals, 'expected_contact_rate': 0.40}
         elif points >= 40:
-            score = 'B'
-            contact_prob = 0.05
+            return {'prospect_class': 'B', 'points': points, 'signals': signals, 'expected_contact_rate': 0.05}
         else:
-            score = 'C'
-            contact_prob = 0.02
+            return {'prospect_class': 'C', 'points': points, 'signals': signals, 'expected_contact_rate': 0.02}
+```
 
-        return {
-            'score': score,
-            'points': points,
-            'signals': signals,
-            'contact_probability': contact_prob
-        }
+#### B. LeadScorer (Hot/Warm/Cold) - Déjà existant
+
+```python
+class LeadScorer:
+    """
+    Score les leads selon complétude et engagement.
+
+    Utilisé APRÈS contact pour qualifier les leads.
+    Hot = prêt à closer, Warm = à nurture, Cold = à réactiver
+
+    Critères: email direct, téléphone, dirigeant, interactions, etc.
+    """
+    # ... (existant dans scoring.py)
+```
+
+#### Workflow complet:
+
+```
+SIRENE → ProspectClassifier (A/B/C) → Import entreprises
+                                           ↓
+                                    Enrichissement Pappers
+                                           ↓
+                                    Prospection (GetSales/LinkedIn)
+                                           ↓
+                              LeadScorer (Hot/Warm/Cold) → HubSpot
 ```
 
 ### 2.3 Presets de campagne
@@ -272,16 +280,29 @@ def render_score_badge(score: str) -> str:
 ### 4.1 Migration `companies`
 
 ```sql
--- Ajouter colonnes segment et score
+-- Segment principal (compatible HubSpot)
 ALTER TABLE companies ADD COLUMN segment TEXT;
-ALTER TABLE companies ADD COLUMN icp_score TEXT;  -- 'A+', 'B', 'C'
-ALTER TABLE companies ADD COLUMN icp_score_points INTEGER;
-ALTER TABLE companies ADD COLUMN icp_score_signals TEXT;  -- JSON array
+-- Valeurs: 'ICP Principal', 'ICP Opportuniste', 'Test', 'Custom'
+
+-- Classification prospect (A/B/C) - avant contact
+ALTER TABLE companies ADD COLUMN prospect_class TEXT;  -- 'A', 'B', 'C'
+ALTER TABLE companies ADD COLUMN prospect_class_points INTEGER;
+ALTER TABLE companies ADD COLUMN prospect_class_signals TEXT;  -- JSON array
+
+-- Tags est déjà présent dans le schéma existant
 
 -- Index pour filtrage
 CREATE INDEX idx_companies_segment ON companies(segment);
-CREATE INDEX idx_companies_icp_score ON companies(icp_score);
+CREATE INDEX idx_companies_prospect_class ON companies(prospect_class);
 ```
+
+### 4.2 Le champ `tags` existant
+
+Le champ `tags` (TEXT, stocké en JSON) permet d'ajouter des tags personnalisés:
+- "campagne_q1_2025"
+- "audit_bpi"
+- "priorité_haute"
+- etc.
 
 ---
 
@@ -298,26 +319,23 @@ CREATE INDEX idx_companies_icp_score ON companies(icp_score);
 
 ---
 
-## 6. Questions ouvertes
+## 6. Décisions validées
 
-> À clarifier avec le Product Owner:
+1. **Segment + Tags**: Les deux
+   - `segment` = champ principal (compatible HubSpot): "ICP Principal", "ICP Opportuniste", etc.
+   - `tags` = tags additionnels pour retrouver/filtrer
 
-1. **Segment unique ou tags multiples?**
-   - [ ] Champ unique `segment` (recommandé pour simplicité)
-   - [ ] Tags multiples dans champ `tags`
+2. **Scoring: 2 systèmes distincts**
+   - `prospect_class` (A/B/C) = classification ICP basée sur critères métier (effectif, CA, secteur, géo)
+   - `lead_score` (Hot/Warm/Cold) = scoring engagement/complétude (email, tel, dirigeant)
+   - **Workflow**: On trouve des prospects A/B/C → on les qualifie en leads Hot/Warm/Cold
 
-2. **Scoring: remplacer ou compléter?**
-   - [ ] Remplacer Hot/Warm/Cold par A+/B/C
-   - [ ] Garder les deux (complétude + ICP)
+3. **Vue résultats**: 2 onglets
+   - Onglet "Nouvelles entreprises"
+   - Onglet "Déjà en base"
 
-3. **Vue résultats:**
-   - [ ] 2 onglets "Nouvelles" / "Existantes"
-   - [ ] Une seule liste avec badge "En base"
-
-4. **Enrichissement depuis:**
-   - [ ] Page Base de Leads (sélection entreprise)
-   - [ ] Page Recherche (pendant import)
-   - [ ] Les deux
+4. **Enrichissement**: Depuis page Base de Leads
+   - Sélection entreprise → bouton "Enrichir Pappers"
 
 ---
 
