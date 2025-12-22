@@ -934,6 +934,198 @@ with tab2:
             hubspot_synced = stats.get('hubspot_synced', 0)
             st.metric("↗️ Sync vers HubSpot", hubspot_synced)
 
+        # =====================================================================
+        # SECTION DÉDUPLICATION
+        # =====================================================================
+        st.divider()
+        st.subheader("🧹 Déduplication")
+        st.info("Détectez et fusionnez les doublons d'entreprises et de contacts. Les doublons seront renommés avec le suffixe `_todelete` pour un nettoyage manuel dans HubSpot.")
+
+        # Mode de déduplication
+        dedup_mode = st.radio(
+            "Type de déduplication",
+            options=["🏢 Entreprises", "👤 Contacts", "🔄 Les deux"],
+            horizontal=True,
+            help="Choisissez le type d'entités à dédupliquer"
+        )
+
+        # Seuil de similarité
+        col1, col2 = st.columns(2)
+        with col1:
+            similarity_threshold = st.slider(
+                "Seuil de similarité (%)",
+                min_value=70,
+                max_value=100,
+                value=85,
+                help="Seuil minimum pour considérer deux noms comme similaires"
+            )
+        with col2:
+            sync_to_hubspot = st.checkbox(
+                "Synchroniser vers HubSpot",
+                value=True,
+                help="Renommer aussi les doublons dans HubSpot"
+            )
+
+        # Initialize session state
+        if 'dedup_preview' not in st.session_state:
+            st.session_state.dedup_preview = None
+
+        # Bouton de détection
+        if st.button("🔍 Détecter les doublons", type="secondary", use_container_width=True):
+            with st.spinner("Analyse en cours..."):
+                preview_data = {
+                    'companies': [],
+                    'contacts': [],
+                    'mode': dedup_mode
+                }
+
+                # Détection entreprises
+                if dedup_mode in ["🏢 Entreprises", "🔄 Les deux"]:
+                    if COMPANY_SCHEMA_AVAILABLE and company_manager:
+                        company_duplicates = company_manager.find_duplicates(
+                            threshold=similarity_threshold / 100,
+                            limit=50
+                        )
+                        preview_data['companies'] = company_duplicates
+
+                # Détection contacts
+                if dedup_mode in ["👤 Contacts", "🔄 Les deux"]:
+                    contact_duplicates = contact_manager.find_duplicates(
+                        threshold=similarity_threshold / 100,
+                        limit=50
+                    )
+                    preview_data['contacts'] = contact_duplicates
+
+                st.session_state.dedup_preview = preview_data
+
+        # Afficher les résultats
+        if st.session_state.dedup_preview:
+            preview = st.session_state.dedup_preview
+
+            # === Section Entreprises ===
+            if preview['mode'] in ["🏢 Entreprises", "🔄 Les deux"] and preview['companies']:
+                st.markdown("### 🏢 Doublons d'entreprises")
+                st.info(f"**{len(preview['companies'])} groupes** de doublons potentiels détectés")
+
+                for i, group in enumerate(preview['companies'][:10]):
+                    with st.expander(
+                        f"**Groupe {i+1}** - Score: {group['score']}% - {group['reason']}",
+                        expanded=(i == 0)
+                    ):
+                        # Afficher les entreprises du groupe
+                        companies_df = []
+                        for c in group['companies']:
+                            companies_df.append({
+                                'ID': c['id'],
+                                'Nom': c.get('company_name', 'N/A'),
+                                'SIREN': c.get('siren', ''),
+                                'Ville': c.get('city', ''),
+                                'Contacts': c.get('contact_count', 0),
+                                'HubSpot': '✓' if c.get('hubspot_company_id') else ''
+                            })
+                        st.dataframe(pd.DataFrame(companies_df), use_container_width=True, hide_index=True)
+
+                        # Sélection du master
+                        master_options = {f"{c['id']} - {c.get('company_name', 'N/A')}": c['id'] for c in group['companies']}
+                        selected_master = st.selectbox(
+                            "Entreprise à conserver (master)",
+                            options=list(master_options.keys()),
+                            key=f"company_master_{i}"
+                        )
+                        master_id = master_options[selected_master]
+                        duplicate_ids = [c['id'] for c in group['companies'] if c['id'] != master_id]
+
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("✅ Fusionner", key=f"merge_company_{i}", type="primary"):
+                                result = company_manager.merge_companies(
+                                    master_id=master_id,
+                                    duplicate_ids=duplicate_ids,
+                                    sync_hubspot=sync_to_hubspot
+                                )
+                                if result['success']:
+                                    st.success(f"✅ Fusion réussie ! {result['contacts_moved']} contacts transférés, {result['companies_merged']} entreprises marquées _todelete")
+                                    st.session_state.dedup_preview = None
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Erreur: {result['errors']}")
+                        with col2:
+                            if st.button("❌ Ignorer", key=f"ignore_company_{i}"):
+                                st.info("Groupe ignoré")
+
+            elif preview['mode'] in ["🏢 Entreprises", "🔄 Les deux"]:
+                st.success("✅ Aucun doublon d'entreprise détecté !")
+
+            # === Section Contacts ===
+            if preview['mode'] in ["👤 Contacts", "🔄 Les deux"] and preview['contacts']:
+                st.markdown("### 👤 Doublons de contacts")
+                st.info(f"**{len(preview['contacts'])} groupes** de doublons/homonymes détectés")
+
+                for i, group in enumerate(preview['contacts'][:10]):
+                    type_label = "🔴 DOUBLON" if group['type'] != 'homonyme' else "🟡 HOMONYME"
+                    with st.expander(
+                        f"**Groupe {i+1}** - {type_label} - Score: {group['score']}% - {group['reason']}",
+                        expanded=(i == 0)
+                    ):
+                        # Afficher les contacts du groupe
+                        contacts_df = []
+                        for c in group['contacts']:
+                            contacts_df.append({
+                                'ID': c['id'],
+                                'Nom': f"{c.get('firstname', '')} {c.get('lastname', '')}".strip(),
+                                'Email': c.get('email', ''),
+                                'Entreprise': c.get('company_name', ''),
+                                'HubSpot': '✓' if c.get('hubspot_contact_id') else ''
+                            })
+                        st.dataframe(pd.DataFrame(contacts_df), use_container_width=True, hide_index=True)
+
+                        if group['type'] == 'homonyme':
+                            # Option pour marquer comme homonymes
+                            if st.button("👥 Confirmer comme homonymes", key=f"homonym_{i}"):
+                                contact_ids = [c['id'] for c in group['contacts']]
+                                if contact_manager.mark_as_homonyms(contact_ids):
+                                    st.success("✅ Contacts marqués comme homonymes")
+                                    st.session_state.dedup_preview = None
+                                    st.rerun()
+                        else:
+                            # Sélection du master pour fusion
+                            master_options = {
+                                f"{c['id']} - {c.get('firstname', '')} {c.get('lastname', '')}": c['id']
+                                for c in group['contacts']
+                            }
+                            selected_master = st.selectbox(
+                                "Contact à conserver (master)",
+                                options=list(master_options.keys()),
+                                key=f"contact_master_{i}"
+                            )
+                            master_id = master_options[selected_master]
+                            duplicate_ids = [c['id'] for c in group['contacts'] if c['id'] != master_id]
+
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button("✅ Fusionner", key=f"merge_contact_{i}", type="primary"):
+                                    result = contact_manager.merge_contacts(
+                                        master_id=master_id,
+                                        duplicate_ids=duplicate_ids,
+                                        sync_hubspot=sync_to_hubspot
+                                    )
+                                    if result['success']:
+                                        st.success(f"✅ Fusion réussie ! {result['contacts_merged']} contacts marqués _todelete")
+                                        st.session_state.dedup_preview = None
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Erreur: {result['errors']}")
+                            with col2:
+                                if st.button("❌ Ignorer", key=f"ignore_contact_{i}"):
+                                    st.info("Groupe ignoré")
+
+            elif preview['mode'] in ["👤 Contacts", "🔄 Les deux"]:
+                st.success("✅ Aucun doublon de contact détecté !")
+
+            # Bouton pour effacer la preview
+            if st.button("🔄 Nouvelle analyse", use_container_width=True):
+                st.session_state.dedup_preview = None
+                st.rerun()
 
 
 # --- TAB 4: Gestion ---

@@ -77,6 +77,9 @@ class CompanyManager:
                     ('prospect_class_points', 'INTEGER'),
                     ('prospect_class_signals', 'TEXT'),
                     ('segment', 'TEXT'),
+                    # Colonnes pour la déduplication
+                    ('merged_into', 'INTEGER'),
+                    ('merged_at', 'TIMESTAMP'),
                 ]
 
                 # Récupérer les colonnes existantes
@@ -1636,4 +1639,390 @@ class CompanyManager:
                 LIMIT ?
             """, params)
 
+            return [dict(row) for row in cursor.fetchall()]
+
+    # =========================================================================
+    # DÉDUPLICATION
+    # =========================================================================
+
+    def find_duplicates(
+        self,
+        threshold: float = 0.85,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Détecte les groupes de doublons potentiels.
+
+        Critères de matching (par ordre de priorité):
+        1. SIREN identique (100% - doublon certain)
+        2. Website identique (95% - très probable)
+        3. Nom fuzzy match (>threshold) + même ville
+
+        Args:
+            threshold: Seuil de similarité pour le nom (0-1)
+            limit: Nombre max de groupes à retourner
+
+        Returns:
+            Liste de groupes: [{
+                'score': float,
+                'reason': str,
+                'companies': [company1, company2, ...]
+            }]
+        """
+        groups = []
+        processed_ids = set()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Récupérer toutes les entreprises actives
+            cursor.execute("""
+                SELECT c.*,
+                    (SELECT COUNT(*) FROM contacts WHERE company_id = c.id) as contact_count
+                FROM companies c
+                WHERE c.status = 'active'
+                ORDER BY c.company_name
+            """)
+            companies = [dict(row) for row in cursor.fetchall()]
+
+            # 1. Grouper par SIREN identique
+            siren_groups = {}
+            for company in companies:
+                siren = company.get('siren')
+                if siren and len(siren) >= 9:
+                    siren_key = siren[:9]  # Prendre les 9 premiers caractères
+                    if siren_key not in siren_groups:
+                        siren_groups[siren_key] = []
+                    siren_groups[siren_key].append(company)
+
+            for siren, group_companies in siren_groups.items():
+                if len(group_companies) > 1:
+                    ids = tuple(sorted(c['id'] for c in group_companies))
+                    if ids not in processed_ids:
+                        processed_ids.add(ids)
+                        groups.append({
+                            'score': 100,
+                            'reason': f'SIREN identique ({siren})',
+                            'companies': group_companies
+                        })
+
+            # 2. Grouper par website identique
+            website_groups = {}
+            for company in companies:
+                if company['id'] in {c['id'] for g in groups for c in g['companies']}:
+                    continue  # Déjà dans un groupe SIREN
+                website = company.get('website')
+                if website:
+                    domain = self._normalize_domain(website)
+                    if domain and len(domain) > 3:
+                        if domain not in website_groups:
+                            website_groups[domain] = []
+                        website_groups[domain].append(company)
+
+            for domain, group_companies in website_groups.items():
+                if len(group_companies) > 1:
+                    ids = tuple(sorted(c['id'] for c in group_companies))
+                    if ids not in processed_ids:
+                        processed_ids.add(ids)
+                        groups.append({
+                            'score': 95,
+                            'reason': f'Website identique ({domain})',
+                            'companies': group_companies
+                        })
+
+            # 3. Fuzzy matching sur le nom (plus coûteux)
+            already_grouped = {c['id'] for g in groups for c in g['companies']}
+            remaining = [c for c in companies if c['id'] not in already_grouped]
+
+            for i, company_a in enumerate(remaining):
+                if company_a['id'] in already_grouped:
+                    continue
+
+                name_a = company_a.get('company_name', '')
+                if not name_a:
+                    continue
+
+                name_a_norm = self._normalize_company_name(name_a)
+                potential_group = [company_a]
+
+                for company_b in remaining[i+1:]:
+                    if company_b['id'] in already_grouped:
+                        continue
+
+                    name_b = company_b.get('company_name', '')
+                    if not name_b:
+                        continue
+
+                    name_b_norm = self._normalize_company_name(name_b)
+                    similarity = self._similarity(name_a_norm, name_b_norm)
+
+                    if similarity >= threshold:
+                        # Bonus si même ville
+                        city_a = (company_a.get('city') or '').lower().strip()
+                        city_b = (company_b.get('city') or '').lower().strip()
+                        if city_a and city_b and city_a == city_b:
+                            similarity = min(similarity + 0.1, 1.0)
+
+                        if similarity >= threshold:
+                            potential_group.append(company_b)
+                            already_grouped.add(company_b['id'])
+
+                if len(potential_group) > 1:
+                    already_grouped.add(company_a['id'])
+                    avg_similarity = sum(
+                        self._similarity(
+                            self._normalize_company_name(c.get('company_name', '')),
+                            name_a_norm
+                        ) for c in potential_group[1:]
+                    ) / (len(potential_group) - 1)
+
+                    groups.append({
+                        'score': round(avg_similarity * 100),
+                        'reason': f'Nom similaire ({round(avg_similarity * 100)}%)',
+                        'companies': potential_group
+                    })
+
+        # Trier par score décroissant et limiter
+        groups.sort(key=lambda x: x['score'], reverse=True)
+        return groups[:limit]
+
+    def merge_companies(
+        self,
+        master_id: int,
+        duplicate_ids: List[int],
+        sync_hubspot: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Fusionne des entreprises vers le master.
+
+        Actions:
+        1. Transfère tous les contacts des doublons vers le master
+        2. Complète les données manquantes du master
+        3. Renomme les doublons avec suffixe "_todelete"
+        4. Met à jour le status en 'merged'
+        5. Optionnel: sync HubSpot
+
+        Args:
+            master_id: ID de l'entreprise à conserver
+            duplicate_ids: Liste des IDs des doublons
+            sync_hubspot: Si True, synchronise avec HubSpot
+
+        Returns:
+            Dict avec résultats: {
+                'success': bool,
+                'contacts_moved': int,
+                'companies_merged': int,
+                'hubspot_synced': bool,
+                'errors': []
+            }
+        """
+        result = {
+            'success': False,
+            'contacts_moved': 0,
+            'companies_merged': 0,
+            'hubspot_synced': False,
+            'errors': []
+        }
+
+        if not duplicate_ids:
+            result['errors'].append("Aucun doublon à fusionner")
+            return result
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                # Récupérer le master
+                cursor.execute("SELECT * FROM companies WHERE id = ?", (master_id,))
+                master_row = cursor.fetchone()
+                if not master_row:
+                    result['errors'].append(f"Master {master_id} non trouvé")
+                    return result
+                master = dict(master_row)
+
+                # Pour chaque doublon
+                for dup_id in duplicate_ids:
+                    if dup_id == master_id:
+                        continue
+
+                    cursor.execute("SELECT * FROM companies WHERE id = ?", (dup_id,))
+                    dup_row = cursor.fetchone()
+                    if not dup_row:
+                        result['errors'].append(f"Doublon {dup_id} non trouvé")
+                        continue
+                    duplicate = dict(dup_row)
+
+                    # 1. Transférer les contacts vers le master
+                    cursor.execute("""
+                        UPDATE contacts
+                        SET company_id = ?, updated_at = ?
+                        WHERE company_id = ?
+                    """, (master_id, datetime.now(), dup_id))
+                    contacts_moved = cursor.rowcount
+                    result['contacts_moved'] += contacts_moved
+                    logger.info(f"Transféré {contacts_moved} contacts de {dup_id} vers {master_id}")
+
+                    # 2. Compléter les données manquantes du master
+                    fields_to_merge = [
+                        'siren', 'website', 'company_phone', 'company_email',
+                        'address', 'postal_code', 'city', 'region', 'country',
+                        'ape_code', 'ape_label', 'employee_range', 'revenue_range'
+                    ]
+                    for field in fields_to_merge:
+                        if not master.get(field) and duplicate.get(field):
+                            cursor.execute(
+                                f"UPDATE companies SET {field} = ? WHERE id = ?",
+                                (duplicate[field], master_id)
+                            )
+                            master[field] = duplicate[field]
+
+                    # 3. Renommer le doublon avec "_todelete"
+                    old_name = duplicate.get('company_name', 'Unknown')
+                    new_name = f"{old_name}_todelete"
+                    cursor.execute("""
+                        UPDATE companies
+                        SET company_name = ?,
+                            status = 'merged',
+                            merged_into = ?,
+                            merged_at = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                    """, (new_name, master_id, datetime.now(), datetime.now(), dup_id))
+
+                    result['companies_merged'] += 1
+                    logger.info(f"Entreprise {dup_id} renommée en '{new_name}' et marquée merged")
+
+                # Mettre à jour les stats du master
+                self._update_company_stats_single(cursor, master_id)
+                conn.commit()
+
+                result['success'] = True
+
+                # 4. Sync HubSpot si demandé
+                if sync_hubspot:
+                    try:
+                        hubspot_result = self._sync_merge_to_hubspot(master, duplicate_ids)
+                        result['hubspot_synced'] = hubspot_result.get('success', False)
+                        if not result['hubspot_synced']:
+                            result['errors'].append(f"HubSpot sync: {hubspot_result.get('error')}")
+                    except Exception as e:
+                        result['errors'].append(f"HubSpot sync error: {e}")
+                        logger.error(f"Erreur sync HubSpot: {e}")
+
+        except Exception as e:
+            result['errors'].append(str(e))
+            logger.error(f"Erreur fusion entreprises: {e}")
+
+        return result
+
+    def _sync_merge_to_hubspot(
+        self,
+        master: Dict[str, Any],
+        duplicate_ids: List[int]
+    ) -> Dict[str, Any]:
+        """
+        Synchronise la fusion vers HubSpot.
+
+        Actions:
+        1. Renomme les doublons HubSpot en "_todelete"
+        2. Réassigne les contacts vers le master
+
+        Args:
+            master: Entreprise master
+            duplicate_ids: IDs des doublons locaux
+
+        Returns:
+            Dict avec success et errors
+        """
+        from .hubspot_client import HubSpotClient
+
+        result = {'success': True, 'renamed': 0, 'contacts_reassigned': 0, 'errors': []}
+
+        try:
+            with HubSpotClient() as hubspot:
+                # Récupérer les doublons avec leurs hubspot_company_id
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+
+                    master_hubspot_id = master.get('hubspot_company_id')
+
+                    for dup_id in duplicate_ids:
+                        cursor.execute(
+                            "SELECT company_name, hubspot_company_id FROM companies WHERE id = ?",
+                            (dup_id,)
+                        )
+                        row = cursor.fetchone()
+                        if not row:
+                            continue
+
+                        dup_name = row['company_name']
+                        dup_hubspot_id = row['hubspot_company_id']
+
+                        if not dup_hubspot_id:
+                            continue
+
+                        # Renommer dans HubSpot
+                        try:
+                            # Le nom a déjà été modifié localement avec _todelete
+                            hubspot.update_company(
+                                hubspot_company_id=dup_hubspot_id,
+                                properties={'name': dup_name}  # Déjà suffixé _todelete
+                            )
+                            result['renamed'] += 1
+                            logger.info(f"HubSpot company {dup_hubspot_id} renommée: {dup_name}")
+                        except Exception as e:
+                            result['errors'].append(f"Rename {dup_hubspot_id}: {e}")
+                            logger.warning(f"Erreur rename HubSpot {dup_hubspot_id}: {e}")
+
+                        # Réassigner les contacts si master a un hubspot_id
+                        if master_hubspot_id:
+                            try:
+                                # Récupérer les contacts associés au doublon
+                                contacts = hubspot.get_company_contacts(dup_hubspot_id)
+                                for contact in contacts:
+                                    contact_id = contact.get('id')
+                                    if contact_id:
+                                        hubspot.associate_contact_to_company(
+                                            contact_id,
+                                            master_hubspot_id
+                                        )
+                                        result['contacts_reassigned'] += 1
+                            except Exception as e:
+                                result['errors'].append(f"Reassign contacts from {dup_hubspot_id}: {e}")
+                                logger.warning(f"Erreur reassign contacts HubSpot: {e}")
+
+        except Exception as e:
+            result['success'] = False
+            result['errors'].append(str(e))
+            logger.error(f"Erreur sync merge HubSpot: {e}")
+
+        if result['errors']:
+            result['success'] = len(result['errors']) < len(duplicate_ids)
+
+        return result
+
+    def get_merged_companies(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Récupère les entreprises marquées comme fusionnées (_todelete).
+
+        Args:
+            limit: Nombre max
+
+        Returns:
+            Liste d'entreprises avec status='merged'
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT c.*, m.company_name as merged_into_name
+                FROM companies c
+                LEFT JOIN companies m ON c.merged_into = m.id
+                WHERE c.status = 'merged'
+                ORDER BY c.merged_at DESC
+                LIMIT ?
+            """, (limit,))
             return [dict(row) for row in cursor.fetchall()]

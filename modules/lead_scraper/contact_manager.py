@@ -160,6 +160,44 @@ class ContactManager:
 
         logger.info(f"Base de données initialisée: {self.db_path}")
 
+        # Migration pour déduplication
+        self._ensure_dedup_schema()
+
+    def _ensure_dedup_schema(self):
+        """Ajoute les colonnes pour la déduplication si nécessaire."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # Vérifier si la table contacts existe
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='contacts'")
+                if not cursor.fetchone():
+                    return  # Table n'existe pas encore
+
+                # Colonnes à ajouter pour la déduplication
+                columns_to_add = [
+                    ('merged_into', 'INTEGER'),
+                    ('merged_at', 'TIMESTAMP'),
+                    ('homonym_group_id', 'INTEGER'),
+                ]
+
+                # Récupérer les colonnes existantes
+                cursor.execute("PRAGMA table_info(contacts)")
+                existing_columns = {row[1] for row in cursor.fetchall()}
+
+                # Ajouter les colonnes manquantes
+                for col_name, col_type in columns_to_add:
+                    if col_name not in existing_columns:
+                        try:
+                            cursor.execute(f"ALTER TABLE contacts ADD COLUMN {col_name} {col_type}")
+                            logger.info(f"Colonne {col_name} ajoutée à contacts")
+                        except sqlite3.OperationalError:
+                            pass  # Colonne existe déjà
+
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Erreur migration schema contacts dedup: {e}")
+
     def _generate_uuid(self) -> str:
         """Génère un UUID unique."""
         return str(uuid.uuid4())
@@ -1946,4 +1984,450 @@ class ContactManager:
                 LIMIT ?
             """, (limit,))
 
+            return [dict(row) for row in cursor.fetchall()]
+
+    # =========================================================================
+    # DÉDUPLICATION
+    # =========================================================================
+
+    def _normalize_name(self, name: str) -> str:
+        """Normalise un nom pour la comparaison."""
+        if not name:
+            return ""
+        normalized = name.lower().strip()
+        # Supprimer caractères spéciaux sauf espaces
+        normalized = ''.join(c for c in normalized if c.isalnum() or c == ' ')
+        # Supprimer espaces multiples
+        normalized = ' '.join(normalized.split())
+        return normalized
+
+    def _similarity(self, s1: str, s2: str) -> float:
+        """Calcule la similarité entre deux chaînes (Levenshtein normalisé)."""
+        if not s1 or not s2:
+            return 0.0
+        if s1 == s2:
+            return 1.0
+
+        len1, len2 = len(s1), len(s2)
+        if len1 < len2:
+            s1, s2 = s2, s1
+            len1, len2 = len2, len1
+
+        if len1 - len2 > max(len1, len2) * 0.3:
+            return 0.0
+
+        previous_row = range(len2 + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+
+        distance = previous_row[-1]
+        max_len = max(len1, len2)
+        return 1 - (distance / max_len)
+
+    def find_duplicates(
+        self,
+        threshold: float = 0.90,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Détecte les groupes de doublons/homonymes potentiels.
+
+        Critères de matching (par ordre de priorité):
+        1. Email identique (100% - doublon certain)
+        2. Téléphone identique (95% - très probable)
+        3. Nom+Prénom fuzzy match (>threshold)
+           - Même entreprise → doublon probable
+           - Entreprises différentes → homonyme possible
+
+        Args:
+            threshold: Seuil de similarité pour le nom (0-1)
+            limit: Nombre max de groupes à retourner
+
+        Returns:
+            Liste de groupes: [{
+                'score': float,
+                'type': 'doublon_certain' | 'doublon_probable' | 'homonyme',
+                'reason': str,
+                'contacts': [contact1, contact2, ...]
+            }]
+        """
+        groups = []
+        processed_ids = set()
+
+        table = self._get_table_name()
+        if table != 'contacts':
+            return groups
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Récupérer tous les contacts actifs
+            cursor.execute("""
+                SELECT c.*, comp.company_name
+                FROM contacts c
+                LEFT JOIN companies comp ON c.company_id = comp.id
+                WHERE c.status = 'active'
+                ORDER BY c.lastname, c.firstname
+            """)
+            contacts = [dict(row) for row in cursor.fetchall()]
+
+            # 1. Grouper par email identique
+            email_groups = {}
+            for contact in contacts:
+                email = (contact.get('email') or '').lower().strip()
+                if email and '@' in email:
+                    if email not in email_groups:
+                        email_groups[email] = []
+                    email_groups[email].append(contact)
+
+            for email, group_contacts in email_groups.items():
+                if len(group_contacts) > 1:
+                    ids = tuple(sorted(c['id'] for c in group_contacts))
+                    if ids not in processed_ids:
+                        processed_ids.add(ids)
+                        groups.append({
+                            'score': 100,
+                            'type': 'doublon_certain',
+                            'reason': f'Email identique ({email})',
+                            'contacts': group_contacts
+                        })
+
+            # 2. Grouper par téléphone identique
+            phone_groups = {}
+            for contact in contacts:
+                if contact['id'] in {c['id'] for g in groups for c in g['contacts']}:
+                    continue
+                phone = (contact.get('phone') or '').strip()
+                # Normaliser le téléphone (garder que les chiffres)
+                phone_clean = ''.join(c for c in phone if c.isdigit())
+                if phone_clean and len(phone_clean) >= 9:
+                    # Prendre les 9 derniers chiffres (numéro sans indicatif)
+                    phone_key = phone_clean[-9:]
+                    if phone_key not in phone_groups:
+                        phone_groups[phone_key] = []
+                    phone_groups[phone_key].append(contact)
+
+            for phone, group_contacts in phone_groups.items():
+                if len(group_contacts) > 1:
+                    ids = tuple(sorted(c['id'] for c in group_contacts))
+                    if ids not in processed_ids:
+                        processed_ids.add(ids)
+                        groups.append({
+                            'score': 95,
+                            'type': 'doublon_certain',
+                            'reason': f'Téléphone identique (...{phone[-4:]})',
+                            'contacts': group_contacts
+                        })
+
+            # 3. Fuzzy matching sur le nom complet
+            already_grouped = {c['id'] for g in groups for c in g['contacts']}
+            remaining = [c for c in contacts if c['id'] not in already_grouped]
+
+            for i, contact_a in enumerate(remaining):
+                if contact_a['id'] in already_grouped:
+                    continue
+
+                firstname_a = contact_a.get('firstname') or ''
+                lastname_a = contact_a.get('lastname') or ''
+                fullname_a = f"{firstname_a} {lastname_a}".strip()
+
+                if not fullname_a or len(fullname_a) < 3:
+                    continue
+
+                fullname_a_norm = self._normalize_name(fullname_a)
+                potential_group = [contact_a]
+
+                for contact_b in remaining[i+1:]:
+                    if contact_b['id'] in already_grouped:
+                        continue
+
+                    firstname_b = contact_b.get('firstname') or ''
+                    lastname_b = contact_b.get('lastname') or ''
+                    fullname_b = f"{firstname_b} {lastname_b}".strip()
+
+                    if not fullname_b or len(fullname_b) < 3:
+                        continue
+
+                    fullname_b_norm = self._normalize_name(fullname_b)
+                    similarity = self._similarity(fullname_a_norm, fullname_b_norm)
+
+                    if similarity >= threshold:
+                        potential_group.append(contact_b)
+                        already_grouped.add(contact_b['id'])
+
+                if len(potential_group) > 1:
+                    already_grouped.add(contact_a['id'])
+
+                    # Déterminer le type : doublon ou homonyme
+                    company_ids = set(c.get('company_id') for c in potential_group if c.get('company_id'))
+
+                    if len(company_ids) <= 1:
+                        group_type = 'doublon_probable'
+                        reason = f'Nom similaire, même entreprise'
+                    else:
+                        group_type = 'homonyme'
+                        reason = f'Nom similaire, {len(company_ids)} entreprises différentes'
+
+                    avg_similarity = sum(
+                        self._similarity(
+                            self._normalize_name(f"{c.get('firstname', '')} {c.get('lastname', '')}"),
+                            fullname_a_norm
+                        ) for c in potential_group[1:]
+                    ) / (len(potential_group) - 1)
+
+                    groups.append({
+                        'score': round(avg_similarity * 100),
+                        'type': group_type,
+                        'reason': reason,
+                        'contacts': potential_group
+                    })
+
+        # Trier par score décroissant et limiter
+        groups.sort(key=lambda x: x['score'], reverse=True)
+        return groups[:limit]
+
+    def merge_contacts(
+        self,
+        master_id: int,
+        duplicate_ids: List[int],
+        sync_hubspot: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Fusionne des contacts vers le master.
+
+        Actions:
+        1. Complète les données manquantes du master
+        2. Renomme les doublons avec suffixe "_todelete"
+        3. Met à jour le status en 'merged'
+        4. Optionnel: sync HubSpot
+
+        Args:
+            master_id: ID du contact à conserver
+            duplicate_ids: Liste des IDs des doublons
+            sync_hubspot: Si True, synchronise avec HubSpot
+
+        Returns:
+            Dict avec résultats
+        """
+        result = {
+            'success': False,
+            'contacts_merged': 0,
+            'hubspot_synced': False,
+            'errors': []
+        }
+
+        table = self._get_table_name()
+        if table != 'contacts':
+            result['errors'].append("Table contacts non disponible")
+            return result
+
+        if not duplicate_ids:
+            result['errors'].append("Aucun doublon à fusionner")
+            return result
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                # Récupérer le master
+                cursor.execute("SELECT * FROM contacts WHERE id = ?", (master_id,))
+                master_row = cursor.fetchone()
+                if not master_row:
+                    result['errors'].append(f"Master {master_id} non trouvé")
+                    return result
+                master = dict(master_row)
+
+                # Pour chaque doublon
+                for dup_id in duplicate_ids:
+                    if dup_id == master_id:
+                        continue
+
+                    cursor.execute("SELECT * FROM contacts WHERE id = ?", (dup_id,))
+                    dup_row = cursor.fetchone()
+                    if not dup_row:
+                        result['errors'].append(f"Doublon {dup_id} non trouvé")
+                        continue
+                    duplicate = dict(dup_row)
+
+                    # 1. Compléter les données manquantes du master
+                    fields_to_merge = [
+                        'email', 'phone', 'job_title', 'linkedin_url',
+                        'city', 'address', 'postal_code', 'country'
+                    ]
+                    for field in fields_to_merge:
+                        if not master.get(field) and duplicate.get(field):
+                            cursor.execute(
+                                f"UPDATE contacts SET {field} = ? WHERE id = ?",
+                                (duplicate[field], master_id)
+                            )
+                            master[field] = duplicate[field]
+
+                    # 2. Renommer le doublon avec "_todelete"
+                    old_lastname = duplicate.get('lastname', 'Unknown')
+                    new_lastname = f"{old_lastname}_todelete"
+                    cursor.execute("""
+                        UPDATE contacts
+                        SET lastname = ?,
+                            status = 'merged',
+                            merged_into = ?,
+                            merged_at = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                    """, (new_lastname, master_id, datetime.now(), datetime.now(), dup_id))
+
+                    result['contacts_merged'] += 1
+                    logger.info(f"Contact {dup_id} renommé en '{new_lastname}' et marqué merged")
+
+                conn.commit()
+                result['success'] = True
+
+                # 3. Sync HubSpot si demandé
+                if sync_hubspot:
+                    try:
+                        hubspot_result = self._sync_contact_merge_to_hubspot(master, duplicate_ids)
+                        result['hubspot_synced'] = hubspot_result.get('success', False)
+                    except Exception as e:
+                        result['errors'].append(f"HubSpot sync error: {e}")
+
+        except Exception as e:
+            result['errors'].append(str(e))
+            logger.error(f"Erreur fusion contacts: {e}")
+
+        return result
+
+    def _sync_contact_merge_to_hubspot(
+        self,
+        master: Dict[str, Any],
+        duplicate_ids: List[int]
+    ) -> Dict[str, Any]:
+        """Synchronise la fusion de contacts vers HubSpot."""
+        from .hubspot_client import HubSpotClient
+
+        result = {'success': True, 'renamed': 0, 'errors': []}
+
+        try:
+            with HubSpotClient() as hubspot:
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+
+                    for dup_id in duplicate_ids:
+                        cursor.execute(
+                            "SELECT firstname, lastname, hubspot_contact_id FROM contacts WHERE id = ?",
+                            (dup_id,)
+                        )
+                        row = cursor.fetchone()
+                        if not row or not row['hubspot_contact_id']:
+                            continue
+
+                        # Renommer dans HubSpot (lastname déjà suffixé)
+                        try:
+                            hubspot.update_contact(
+                                row['hubspot_contact_id'],
+                                {'lastname': row['lastname']}
+                            )
+                            result['renamed'] += 1
+                        except Exception as e:
+                            result['errors'].append(f"Rename {row['hubspot_contact_id']}: {e}")
+
+        except Exception as e:
+            result['success'] = False
+            result['errors'].append(str(e))
+
+        return result
+
+    def mark_as_homonyms(self, contact_ids: List[int]) -> bool:
+        """
+        Marque des contacts comme homonymes confirmés.
+
+        Crée un groupe d'homonymes pour éviter de les re-détecter.
+
+        Args:
+            contact_ids: Liste des IDs de contacts homonymes
+
+        Returns:
+            True si succès
+        """
+        if len(contact_ids) < 2:
+            return False
+
+        table = self._get_table_name()
+        if table != 'contacts':
+            return False
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # Créer la table homonym_groups si elle n'existe pas
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS homonym_groups (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        entity_type TEXT NOT NULL,
+                        entity_ids TEXT NOT NULL,
+                        confirmed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        confirmed_by TEXT DEFAULT 'user'
+                    )
+                """)
+
+                # Insérer le groupe
+                import json
+                cursor.execute("""
+                    INSERT INTO homonym_groups (entity_type, entity_ids, confirmed_at)
+                    VALUES (?, ?, ?)
+                """, ('contact', json.dumps(contact_ids), datetime.now()))
+
+                group_id = cursor.lastrowid
+
+                # Mettre à jour les contacts
+                for contact_id in contact_ids:
+                    cursor.execute("""
+                        UPDATE contacts
+                        SET homonym_group_id = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (group_id, datetime.now(), contact_id))
+
+                conn.commit()
+                logger.info(f"Homonymes confirmés: {contact_ids} (groupe {group_id})")
+                return True
+
+        except Exception as e:
+            logger.error(f"Erreur mark_as_homonyms: {e}")
+            return False
+
+    def get_merged_contacts(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Récupère les contacts marqués comme fusionnés (_todelete).
+
+        Args:
+            limit: Nombre max
+
+        Returns:
+            Liste de contacts avec status='merged'
+        """
+        table = self._get_table_name()
+        if table != 'contacts':
+            return []
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT c.*,
+                    m.firstname as merged_into_firstname,
+                    m.lastname as merged_into_lastname
+                FROM contacts c
+                LEFT JOIN contacts m ON c.merged_into = m.id
+                WHERE c.status = 'merged'
+                ORDER BY c.merged_at DESC
+                LIMIT ?
+            """, (limit,))
             return [dict(row) for row in cursor.fetchall()]

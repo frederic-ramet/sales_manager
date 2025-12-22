@@ -799,6 +799,38 @@ class HubSpotClient:
 
         return {"updated": updated, "errors": errors}
 
+    def update_contact(
+        self,
+        hubspot_contact_id: str,
+        properties: Dict[str, Any]
+    ) -> bool:
+        """
+        Met à jour un seul contact dans HubSpot.
+
+        Args:
+            hubspot_contact_id: ID HubSpot du contact
+            properties: Propriétés à mettre à jour (lastname, email, etc.)
+
+        Returns:
+            True si mise à jour réussie
+        """
+        try:
+            self._handle_rate_limit()
+            response = self.client.patch(
+                f"/crm/v3/objects/contacts/{hubspot_contact_id}",
+                json={"properties": properties}
+            )
+            response.raise_for_status()
+            logger.info(f"Contact {hubspot_contact_id} mis à jour: {properties}")
+            return True
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erreur update contact {hubspot_contact_id}: HTTP {e.response.status_code}")
+            return False
+        except Exception as e:
+            logger.error(f"Erreur update contact {hubspot_contact_id}: {e}")
+            return False
+
     def delete_contact(self, contact_id: str) -> bool:
         """
         Supprime un contact de HubSpot.
@@ -993,6 +1025,91 @@ class HubSpotClient:
         except Exception as e:
             logger.error(f"Erreur création company: {e}")
             return None
+
+    def update_company(
+        self,
+        hubspot_company_id: str,
+        properties: Dict[str, Any]
+    ) -> bool:
+        """
+        Met à jour une company dans HubSpot.
+
+        Args:
+            hubspot_company_id: ID HubSpot de la company
+            properties: Propriétés à mettre à jour (name, domain, etc.)
+
+        Returns:
+            True si mise à jour réussie
+        """
+        try:
+            self._handle_rate_limit()
+            response = self.client.patch(
+                f"/crm/v3/objects/companies/{hubspot_company_id}",
+                json={"properties": properties}
+            )
+            response.raise_for_status()
+            logger.info(f"Company {hubspot_company_id} mise à jour: {properties}")
+            return True
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erreur update company {hubspot_company_id}: HTTP {e.response.status_code}")
+            return False
+        except Exception as e:
+            logger.error(f"Erreur update company {hubspot_company_id}: {e}")
+            return False
+
+    def get_company_contacts(
+        self,
+        hubspot_company_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère les contacts associés à une company HubSpot.
+
+        Args:
+            hubspot_company_id: ID HubSpot de la company
+
+        Returns:
+            Liste des contacts associés
+        """
+        contacts = []
+        try:
+            self._handle_rate_limit()
+            response = self.client.get(
+                f"/crm/v3/objects/companies/{hubspot_company_id}/associations/contacts"
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            for result in data.get("results", []):
+                contact_id = result.get("id")
+                if contact_id:
+                    contacts.append({"id": contact_id})
+
+            logger.debug(f"Company {hubspot_company_id}: {len(contacts)} contacts associés")
+
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"Erreur get_company_contacts {hubspot_company_id}: HTTP {e.response.status_code}")
+        except Exception as e:
+            logger.warning(f"Erreur get_company_contacts {hubspot_company_id}: {e}")
+
+        return contacts
+
+    def associate_contact_to_company(
+        self,
+        contact_id: str,
+        company_id: str
+    ) -> bool:
+        """
+        Associe un contact à une nouvelle company (wrapper pour associate_contact_company).
+
+        Args:
+            contact_id: ID du contact HubSpot
+            company_id: ID de la company HubSpot
+
+        Returns:
+            True si association réussie
+        """
+        return self.associate_contact_company(contact_id, company_id)
 
     def associate_contact_company(self, contact_id: str, company_id: str) -> bool:
         """
