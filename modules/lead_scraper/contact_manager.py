@@ -330,7 +330,9 @@ class ContactManager:
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            query = f"UPDATE unified_contacts SET {', '.join(fields_to_update)} WHERE uuid = ?"
+            # Utiliser la bonne table selon le schéma
+            table = self._get_table_name()
+            query = f"UPDATE {table} SET {', '.join(fields_to_update)} WHERE uuid = ?"
             cursor.execute(query, values)
             conn.commit()
             return cursor.rowcount > 0
@@ -1592,7 +1594,7 @@ class ContactManager:
             cursor.execute(f"""
                 SELECT * FROM {table}
                 WHERE company_id = ?
-                  AND contact_status = ?
+                  AND status = ?
                 ORDER BY lastname, firstname
                 LIMIT ?
             """, (company_id, status, limit))

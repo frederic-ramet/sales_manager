@@ -58,6 +58,43 @@ class CompanyManager:
             db_path: Chemin vers la base de données SQLite (optionnel)
         """
         self.db_path = db_path or str(DEFAULT_DB_PATH)
+        self._ensure_schema_updated()
+
+    def _ensure_schema_updated(self):
+        """Ajoute les colonnes manquantes si nécessaire."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # Vérifier si la table companies existe
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='companies'")
+                if not cursor.fetchone():
+                    return  # Table n'existe pas encore
+
+                # Colonnes à ajouter pour la classification
+                columns_to_add = [
+                    ('prospect_class', 'TEXT'),
+                    ('prospect_class_points', 'INTEGER'),
+                    ('prospect_class_signals', 'TEXT'),
+                    ('segment', 'TEXT'),
+                ]
+
+                # Récupérer les colonnes existantes
+                cursor.execute("PRAGMA table_info(companies)")
+                existing_columns = {row[1] for row in cursor.fetchall()}
+
+                # Ajouter les colonnes manquantes
+                for col_name, col_type in columns_to_add:
+                    if col_name not in existing_columns:
+                        try:
+                            cursor.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
+                            logger.info(f"Colonne {col_name} ajoutée à companies")
+                        except sqlite3.OperationalError:
+                            pass  # Colonne existe déjà
+
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Erreur migration schema companies: {e}")
 
         # Créer le dossier si nécessaire
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
