@@ -1144,6 +1144,155 @@ class HubSpotClient:
 
         return None
 
+    def get_all_companies(
+        self,
+        limit: int = 1000,
+        progress_callback=None
+    ) -> List[Dict[str, Any]]:
+        """
+        Récupère toutes les companies depuis HubSpot.
+
+        Args:
+            limit: Nombre max de companies à récupérer
+            progress_callback: Fonction callback(current, total) optionnelle
+
+        Returns:
+            Liste de dicts company avec properties normalisées
+        """
+        logger.info(f"Récupération des companies HubSpot (limit={limit})...")
+
+        companies = []
+        after = None
+        page = 0
+
+        properties = [
+            "name", "domain", "industry", "city", "state", "country",
+            "address", "zip", "phone", "website",
+            "numberofemployees", "annualrevenue",
+            "siren", "siret", "code_ape"  # custom properties
+        ]
+
+        try:
+            while len(companies) < limit:
+                self._handle_rate_limit()
+
+                params = {
+                    "limit": min(100, limit - len(companies)),
+                    "properties": ",".join(properties)
+                }
+                if after:
+                    params["after"] = after
+
+                response = self.client.get("/crm/v3/objects/companies", params=params)
+                response.raise_for_status()
+                data = response.json()
+
+                results = data.get("results", [])
+                for result in results:
+                    company = self._parse_company(result)
+                    if company:
+                        companies.append(company)
+
+                page += 1
+                if progress_callback:
+                    progress_callback(len(companies), "sync_companies")
+
+                logger.debug(f"Page {page}: {len(results)} companies récupérées (total: {len(companies)})")
+
+                paging = data.get("paging", {})
+                if "next" in paging:
+                    after = paging["next"]["after"]
+                else:
+                    break
+
+            logger.info(f"Récupération terminée: {len(companies)} companies")
+            return companies
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des companies: {e}")
+            raise
+
+    def _parse_company(self, raw_company: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Parse une company brute de l'API HubSpot.
+
+        Args:
+            raw_company: Company brute depuis l'API
+
+        Returns:
+            Company formatée ou None si invalide
+        """
+        try:
+            props = raw_company.get("properties", {})
+
+            company = {
+                "hubspot_company_id": raw_company.get("id"),
+                "company_name": props.get("name", ""),
+                "website": props.get("domain") or props.get("website", ""),
+                "city": props.get("city", ""),
+                "address": props.get("address", ""),
+                "postal_code": props.get("zip", ""),
+                "country": props.get("country", ""),
+                "siren": props.get("siren", ""),
+                "employee_range": props.get("numberofemployees", ""),
+                "revenue_range": props.get("annualrevenue", ""),
+                "ape_code": props.get("code_ape", ""),
+                "ape_label": props.get("industry", ""),
+            }
+
+            # Filtrer les valeurs vides
+            company = {k: v for k, v in company.items() if v}
+
+            # Garder hubspot_company_id même si vide
+            company["hubspot_company_id"] = raw_company.get("id")
+
+            return company
+
+        except Exception as e:
+            logger.warning(f"Erreur parsing company {raw_company.get('id')}: {e}")
+            return None
+
+    def sync_companies(
+        self,
+        limit: int = 1000,
+        progress_callback=None
+    ) -> Dict[str, Any]:
+        """
+        Synchronise les companies depuis HubSpot.
+
+        Récupère toutes les companies et retourne les données
+        pour analyse/preview avant import.
+
+        Args:
+            limit: Nombre max de companies
+            progress_callback: Fonction callback(current, total) optionnelle
+
+        Returns:
+            Dict avec résultats de la sync:
+            - success: bool
+            - total_companies: int
+            - companies: list
+        """
+        logger.info(f"Début de la synchronisation des companies HubSpot...")
+
+        try:
+            companies = self.get_all_companies(limit=limit, progress_callback=progress_callback)
+
+            return {
+                "success": True,
+                "total_companies": len(companies),
+                "companies": companies
+            }
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la sync companies: {e}")
+            return {
+                "success": False,
+                "total_companies": 0,
+                "companies": [],
+                "error": str(e)
+            }
+
     def sync_companies_batch(
         self,
         companies: List[Dict[str, Any]]

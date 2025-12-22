@@ -543,236 +543,375 @@ with tab2:
 
         st.divider()
 
-        # Options d'import
-        col1, col2 = st.columns(2)
+        # Mode de synchronisation
+        st.markdown("**Mode de synchronisation**")
+        sync_mode = st.radio(
+            "Choisir le mode",
+            options=["🔄 Sync complète (recommandé)", "🏢 Entreprises uniquement", "👤 Contacts uniquement"],
+            help="""
+            **Sync complète** : Synchronise les entreprises d'abord, puis les contacts.
+            **Entreprises uniquement** : Met à jour uniquement les entreprises.
+            **Contacts uniquement** : Met à jour uniquement les contacts.
+            """,
+            horizontal=True
+        )
+
+        st.info("ℹ️ La sync complète synchronise d'abord les entreprises, puis les contacts pour garantir les associations.")
+
+        st.divider()
+
+        # Options selon le mode
+        col1, col2, col3 = st.columns(3)
 
         with col1:
-            sync_mode = st.radio(
-                "Mode de synchronisation",
-                options=["🔄 Sync incrémentale", "💾 Sync complète"],
-                help="Incrémentale : uniquement les contacts modifiés récemment\nComplète : tous les contacts HubSpot"
-            )
-
-        with col2:
-            if sync_mode == "🔄 Sync incrémentale":
-                since_days = st.number_input(
-                    "Modifiés dans les X derniers jours",
-                    min_value=1,
-                    max_value=365,
-                    value=7,
-                    help="Récupère uniquement les contacts modifiés dans cet intervalle"
+            if sync_mode in ["🔄 Sync complète (recommandé)", "🏢 Entreprises uniquement"]:
+                limit_companies = st.number_input(
+                    "🏢 Max entreprises",
+                    min_value=10,
+                    max_value=5000,
+                    value=1000,
+                    step=100,
+                    help="Nombre max d'entreprises à récupérer"
                 )
             else:
-                import_limit = st.number_input(
-                    "Nombre max à importer",
+                limit_companies = 0
+
+        with col2:
+            if sync_mode in ["🔄 Sync complète (recommandé)", "👤 Contacts uniquement"]:
+                limit_contacts = st.number_input(
+                    "👤 Max contacts",
                     min_value=10,
                     max_value=10000,
-                    value=100,
-                    step=10,
-                    help="Pour éviter de surcharger, limitez le nombre de contacts"
+                    value=5000,
+                    step=100,
+                    help="Nombre max de contacts à récupérer"
                 )
+            else:
+                limit_contacts = 0
+
+        with col3:
+            if sync_mode == "👤 Contacts uniquement":
+                since_days = st.number_input(
+                    "⏱️ Modifiés depuis (jours)",
+                    min_value=0,
+                    max_value=365,
+                    value=0,
+                    help="0 = tous les contacts, sinon uniquement les modifiés récemment"
+                )
+            else:
+                since_days = 0
 
         st.divider()
 
         # Initialize session state for preview
-        if 'hubspot_preview' not in st.session_state:
-            st.session_state.hubspot_preview = None
+        if 'hubspot_sync_preview' not in st.session_state:
+            st.session_state.hubspot_sync_preview = None
 
-        # Step 1: Analyze button
-        is_incremental = sync_mode == "🔄 Sync incrémentale"
-        analyze_label = "🔍 Analyser les changements"
-
-        if st.button(analyze_label, type="secondary", use_container_width=True):
+        # Bouton d'analyse
+        if st.button("🔍 Analyser les changements", type="secondary", use_container_width=True):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
             try:
                 status_text.text("🔄 Connexion à HubSpot...")
-                progress_bar.progress(10)
+                progress_bar.progress(5)
 
                 with HubSpotClient() as hubspot:
                     success, msg = hubspot.test_connection()
                     if not success:
                         st.error(f"❌ {msg}")
-                        st.session_state.hubspot_preview = None
+                        st.session_state.hubspot_sync_preview = None
                     else:
-                        # Fetch contacts from HubSpot
-                        if is_incremental:
-                            status_text.text(f"⚡ Récupération des contacts modifiés ({since_days} jours)...")
-                            progress_bar.progress(20)
-                            sync_result = hubspot.sync_recent_contacts(since_days=since_days)
-                            hubspot_contacts = sync_result.get('contacts', [])
-                        else:
-                            status_text.text("📥 Récupération des contacts HubSpot...")
-                            progress_bar.progress(20)
-                            sync_result = hubspot.sync_contacts()
-                            if sync_result['success']:
-                                mirror = hubspot.get_mirror()
-                                hubspot_contacts = mirror.get('contacts', [])
-                                if import_limit and import_limit < len(hubspot_contacts):
-                                    hubspot_contacts = hubspot_contacts[:import_limit]
+                        preview_data = {
+                            'companies': {'new': [], 'update': [], 'unchanged': [], 'total_fetched': 0},
+                            'contacts': {'new': [], 'update': [], 'unchanged': [], 'total_fetched': 0},
+                            'mode': sync_mode,
+                        }
+
+                        # === SYNC ENTREPRISES ===
+                        if sync_mode in ["🔄 Sync complète (recommandé)", "🏢 Entreprises uniquement"]:
+                            status_text.text("🏢 Récupération des entreprises HubSpot...")
+                            progress_bar.progress(10)
+
+                            companies_result = hubspot.sync_companies(limit=limit_companies)
+
+                            if companies_result['success']:
+                                hubspot_companies = companies_result.get('companies', [])
+                                preview_data['companies']['total_fetched'] = len(hubspot_companies)
+
+                                status_text.text("🔍 Analyse des entreprises...")
+                                progress_bar.progress(30)
+
+                                # Analyse de chaque entreprise
+                                for hc in hubspot_companies:
+                                    company_data = {
+                                        'hubspot_company_id': hc.get('hubspot_company_id'),
+                                        'company_name': hc.get('company_name'),
+                                        'website': hc.get('website'),
+                                        'city': hc.get('city'),
+                                        'address': hc.get('address'),
+                                        'postal_code': hc.get('postal_code'),
+                                        'siren': hc.get('siren'),
+                                        'employee_range': hc.get('employee_range'),
+                                    }
+
+                                    # Chercher entreprise existante
+                                    existing = None
+                                    if COMPANY_SCHEMA_AVAILABLE and company_manager:
+                                        if company_data.get('hubspot_company_id'):
+                                            existing = company_manager.find_by_hubspot_id(company_data['hubspot_company_id'])
+                                        if not existing and company_data.get('siren'):
+                                            existing = company_manager.find_by_siren(company_data['siren'])
+                                        if not existing and company_data.get('website'):
+                                            existing = company_manager.find_by_website(company_data['website'])
+                                        if not existing and company_data.get('company_name'):
+                                            exact_match = company_manager.find_by_name_exact(company_data['company_name'])
+                                            if exact_match:
+                                                existing = exact_match
+
+                                    if existing:
+                                        # Vérifier les différences
+                                        has_changes = False
+                                        changes = []
+                                        for key in ['company_name', 'website', 'city', 'address', 'siren']:
+                                            new_val = company_data.get(key)
+                                            old_val = existing.get(key)
+                                            if new_val and new_val != old_val:
+                                                has_changes = True
+                                                changes.append(f"{key}: {old_val} → {new_val}")
+
+                                        if has_changes:
+                                            preview_data['companies']['update'].append({
+                                                'data': company_data,
+                                                'existing': existing,
+                                                'changes': changes
+                                            })
+                                        else:
+                                            preview_data['companies']['unchanged'].append(company_data)
+                                    else:
+                                        preview_data['companies']['new'].append(company_data)
+
+                        # === SYNC CONTACTS ===
+                        if sync_mode in ["🔄 Sync complète (recommandé)", "👤 Contacts uniquement"]:
+                            status_text.text("👤 Récupération des contacts HubSpot...")
+                            progress_bar.progress(50)
+
+                            if since_days > 0:
+                                contacts_result = hubspot.sync_recent_contacts(since_days=since_days)
+                                hubspot_contacts = contacts_result.get('contacts', [])
                             else:
-                                hubspot_contacts = []
-
-                        progress_bar.progress(60)
-                        status_text.text("🔍 Analyse des doublons...")
-
-                        # Analyze each contact
-                        new_contacts = []
-                        update_contacts = []
-                        unchanged_contacts = []
-
-                        for hc in hubspot_contacts:
-                            contact_data = {
-                                'hubspot_contact_id': hc.get('hubspot_id') or hc.get('id'),
-                                'company_name': hc.get('denomination') or hc.get('company'),
-                                'email': hc.get('email'),
-                                'phone': hc.get('telephone') or hc.get('phone'),
-                                'firstname': hc.get('dirigeant', '').split(' ')[0] if hc.get('dirigeant') else hc.get('firstname'),
-                                'lastname': ' '.join(hc.get('dirigeant', '').split(' ')[1:]) if hc.get('dirigeant') else hc.get('lastname'),
-                                'job_title': hc.get('fonction') or hc.get('jobtitle'),
-                                'siren': hc.get('siren'),
-                                'ape_code': hc.get('code_ape'),
-                                'city': hc.get('ville') or hc.get('city'),
-                                'address': hc.get('adresse') or hc.get('address'),
-                                'postal_code': hc.get('code_postal') or hc.get('zip'),
-                            }
-
-                            # Check for existing contact
-                            existing = contact_manager.find_duplicate(
-                                hubspot_contact_id=contact_data.get('hubspot_contact_id'),
-                                email=contact_data.get('email')
-                            )
-
-                            if existing:
-                                # Check if there are differences
-                                has_changes = False
-                                changes = []
-                                for key in ['firstname', 'lastname', 'email', 'phone', 'company_name', 'job_title']:
-                                    new_val = contact_data.get(key)
-                                    old_val = existing.get(key)
-                                    if new_val and new_val != old_val:
-                                        has_changes = True
-                                        changes.append(f"{key}: {old_val} → {new_val}")
-
-                                if has_changes:
-                                    update_contacts.append({
-                                        'data': contact_data,
-                                        'existing': existing,
-                                        'changes': changes
-                                    })
+                                contacts_result = hubspot.sync_contacts()
+                                if contacts_result['success']:
+                                    mirror = hubspot.get_mirror()
+                                    hubspot_contacts = mirror.get('contacts', [])
+                                    if limit_contacts and limit_contacts < len(hubspot_contacts):
+                                        hubspot_contacts = hubspot_contacts[:limit_contacts]
                                 else:
-                                    unchanged_contacts.append(contact_data)
-                            else:
-                                new_contacts.append(contact_data)
+                                    hubspot_contacts = []
+
+                            preview_data['contacts']['total_fetched'] = len(hubspot_contacts)
+
+                            status_text.text("🔍 Analyse des contacts...")
+                            progress_bar.progress(80)
+
+                            # Analyse de chaque contact
+                            for hc in hubspot_contacts:
+                                contact_data = {
+                                    'hubspot_contact_id': hc.get('hubspot_id') or hc.get('id'),
+                                    'email': hc.get('email'),
+                                    'phone': hc.get('telephone') or hc.get('phone'),
+                                    'firstname': hc.get('dirigeant', '').split(' ')[0] if hc.get('dirigeant') else hc.get('firstname'),
+                                    'lastname': ' '.join(hc.get('dirigeant', '').split(' ')[1:]) if hc.get('dirigeant') else hc.get('lastname'),
+                                    'job_title': hc.get('fonction') or hc.get('jobtitle'),
+                                    'city': hc.get('ville') or hc.get('city'),
+                                }
+
+                                existing = contact_manager.find_duplicate(
+                                    hubspot_contact_id=contact_data.get('hubspot_contact_id'),
+                                    email=contact_data.get('email')
+                                )
+
+                                if existing:
+                                    has_changes = False
+                                    changes = []
+                                    for key in ['firstname', 'lastname', 'email', 'phone', 'job_title']:
+                                        new_val = contact_data.get(key)
+                                        old_val = existing.get(key)
+                                        if new_val and new_val != old_val:
+                                            has_changes = True
+                                            changes.append(f"{key}: {old_val} → {new_val}")
+
+                                    if has_changes:
+                                        preview_data['contacts']['update'].append({
+                                            'data': contact_data,
+                                            'existing': existing,
+                                            'changes': changes
+                                        })
+                                    else:
+                                        preview_data['contacts']['unchanged'].append(contact_data)
+                                else:
+                                    preview_data['contacts']['new'].append(contact_data)
 
                         progress_bar.progress(100)
                         status_text.text("✅ Analyse terminée")
 
-                        # Store preview in session state
-                        st.session_state.hubspot_preview = {
-                            'new': new_contacts,
-                            'update': update_contacts,
-                            'unchanged': unchanged_contacts,
-                            'total_fetched': len(hubspot_contacts),
-                            'is_incremental': is_incremental,
-                            'since_days': since_days if is_incremental else None,
-                        }
+                        st.session_state.hubspot_sync_preview = preview_data
 
             except Exception as e:
                 st.error(f"❌ Erreur: {e}")
-                st.session_state.hubspot_preview = None
+                st.session_state.hubspot_sync_preview = None
 
-        # Display preview if available
-        if st.session_state.hubspot_preview:
-            preview = st.session_state.hubspot_preview
+        # Afficher la preview si disponible
+        if st.session_state.hubspot_sync_preview:
+            preview = st.session_state.hubspot_sync_preview
 
             st.divider()
             st.subheader("📋 Preview des changements")
 
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("📥 Récupérés", preview['total_fetched'])
-            with col2:
-                st.metric("🆕 Nouveaux", len(preview['new']), delta=f"+{len(preview['new'])}" if preview['new'] else None)
-            with col3:
-                st.metric("🔄 À mettre à jour", len(preview['update']), delta=f"~{len(preview['update'])}" if preview['update'] else None)
-            with col4:
-                st.metric("✅ Inchangés", len(preview['unchanged']))
+            # === Section Entreprises ===
+            if preview['mode'] in ["🔄 Sync complète (recommandé)", "🏢 Entreprises uniquement"]:
+                st.markdown("### 🏢 ENTREPRISES")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Récupérées", preview['companies']['total_fetched'])
+                with col2:
+                    st.metric("Nouvelles", len(preview['companies']['new']),
+                              delta=f"+{len(preview['companies']['new'])}" if preview['companies']['new'] else None)
+                with col3:
+                    st.metric("À mettre à jour", len(preview['companies']['update']),
+                              delta=f"~{len(preview['companies']['update'])}" if preview['companies']['update'] else None)
+                with col4:
+                    st.metric("Inchangées", len(preview['companies']['unchanged']))
 
-            # Show details
-            if preview['new']:
-                with st.expander(f"🆕 **{len(preview['new'])} nouveaux contacts** (cliquer pour voir)", expanded=False):
-                    new_df = pd.DataFrame(preview['new'])
-                    cols_to_show = ['firstname', 'lastname', 'email', 'company_name', 'job_title']
-                    cols_to_show = [c for c in cols_to_show if c in new_df.columns]
-                    st.dataframe(new_df[cols_to_show].head(20), use_container_width=True, hide_index=True)
-                    if len(preview['new']) > 20:
-                        st.caption(f"... et {len(preview['new']) - 20} autres")
+                if preview['companies']['update']:
+                    with st.expander(f"🔄 **{len(preview['companies']['update'])} entreprises à mettre à jour**", expanded=False):
+                        for i, upd in enumerate(preview['companies']['update'][:10]):
+                            st.markdown(f"**{upd['data'].get('company_name', 'N/A')}**")
+                            for change in upd['changes'][:3]:
+                                st.caption(f"  • {change}")
+                            if i < min(len(preview['companies']['update']) - 1, 9):
+                                st.markdown("---")
+                        if len(preview['companies']['update']) > 10:
+                            st.caption(f"... et {len(preview['companies']['update']) - 10} autres")
 
-            if preview['update']:
-                with st.expander(f"🔄 **{len(preview['update'])} contacts à mettre à jour** (cliquer pour voir)", expanded=False):
-                    for i, upd in enumerate(preview['update'][:10]):
-                        name = f"{upd['data'].get('firstname', '')} {upd['data'].get('lastname', '')}".strip()
-                        st.markdown(f"**{name}** ({upd['data'].get('email', 'N/A')})")
-                        for change in upd['changes'][:3]:
-                            st.caption(f"  • {change}")
-                        if i < len(preview['update']) - 1:
-                            st.markdown("---")
-                    if len(preview['update']) > 10:
-                        st.caption(f"... et {len(preview['update']) - 10} autres")
+                st.markdown("---")
+
+            # === Section Contacts ===
+            if preview['mode'] in ["🔄 Sync complète (recommandé)", "👤 Contacts uniquement"]:
+                st.markdown("### 👤 CONTACTS")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Récupérés", preview['contacts']['total_fetched'])
+                with col2:
+                    st.metric("Nouveaux", len(preview['contacts']['new']),
+                              delta=f"+{len(preview['contacts']['new'])}" if preview['contacts']['new'] else None)
+                with col3:
+                    st.metric("À mettre à jour", len(preview['contacts']['update']),
+                              delta=f"~{len(preview['contacts']['update'])}" if preview['contacts']['update'] else None)
+                with col4:
+                    st.metric("Inchangés", len(preview['contacts']['unchanged']))
+
+                if preview['contacts']['new']:
+                    with st.expander(f"🆕 **{len(preview['contacts']['new'])} nouveaux contacts**", expanded=False):
+                        new_df = pd.DataFrame(preview['contacts']['new'])
+                        cols_to_show = ['firstname', 'lastname', 'email', 'job_title']
+                        cols_to_show = [c for c in cols_to_show if c in new_df.columns]
+                        if cols_to_show:
+                            st.dataframe(new_df[cols_to_show].head(20), use_container_width=True, hide_index=True)
+                        if len(preview['contacts']['new']) > 20:
+                            st.caption(f"... et {len(preview['contacts']['new']) - 20} autres")
+
+                if preview['contacts']['update']:
+                    with st.expander(f"🔄 **{len(preview['contacts']['update'])} contacts à mettre à jour**", expanded=False):
+                        for i, upd in enumerate(preview['contacts']['update'][:10]):
+                            name = f"{upd['data'].get('firstname', '')} {upd['data'].get('lastname', '')}".strip()
+                            st.markdown(f"**{name}** ({upd['data'].get('email', 'N/A')})")
+                            for change in upd['changes'][:3]:
+                                st.caption(f"  • {change}")
+                            if i < min(len(preview['contacts']['update']) - 1, 9):
+                                st.markdown("---")
+                        if len(preview['contacts']['update']) > 10:
+                            st.caption(f"... et {len(preview['contacts']['update']) - 10} autres")
 
             st.divider()
 
-            # Confirm button
+            # Boutons de confirmation
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("❌ Annuler", use_container_width=True):
-                    st.session_state.hubspot_preview = None
+                    st.session_state.hubspot_sync_preview = None
                     st.rerun()
 
             with col2:
-                if st.button("✅ Confirmer l'import", type="primary", use_container_width=True):
+                if st.button("✅ Confirmer la synchronisation", type="primary", use_container_width=True):
                     progress_bar = st.progress(0)
                     status_text = st.empty()
 
                     try:
-                        # Prepare contacts to import
-                        contacts_to_import = []
-                        for c in preview['new']:
-                            c['synced_to_hubspot'] = True
-                            c['last_sync_hubspot'] = datetime.now()
-                            contacts_to_import.append(c)
-                        for upd in preview['update']:
-                            upd['data']['synced_to_hubspot'] = True
-                            upd['data']['last_sync_hubspot'] = datetime.now()
-                            contacts_to_import.append(upd['data'])
+                        companies_added = 0
+                        companies_updated = 0
+                        contacts_added = 0
+                        contacts_updated = 0
 
-                        status_text.text("💾 Import en cours...")
-                        progress_bar.progress(50)
+                        # === IMPORT ENTREPRISES ===
+                        if preview['mode'] in ["🔄 Sync complète (recommandé)", "🏢 Entreprises uniquement"]:
+                            if COMPANY_SCHEMA_AVAILABLE and company_manager:
+                                status_text.text("🏢 Import des entreprises...")
+                                progress_bar.progress(20)
 
-                        # Import
-                        added, updated = contact_manager.import_from_hubspot(contacts_to_import)
+                                companies_to_import = []
+                                for c in preview['companies']['new']:
+                                    companies_to_import.append(c)
+                                for upd in preview['companies']['update']:
+                                    companies_to_import.append(upd['data'])
 
-                        # Update sync metadata
-                        sync_type = 'hubspot_incremental' if preview['is_incremental'] else 'hubspot_full'
+                                if companies_to_import:
+                                    companies_added, companies_updated = company_manager.import_from_hubspot(companies_to_import)
+
+                        # === IMPORT CONTACTS ===
+                        if preview['mode'] in ["🔄 Sync complète (recommandé)", "👤 Contacts uniquement"]:
+                            status_text.text("👤 Import des contacts...")
+                            progress_bar.progress(60)
+
+                            contacts_to_import = []
+                            for c in preview['contacts']['new']:
+                                c['synced_to_hubspot'] = True
+                                c['last_sync_hubspot'] = datetime.now()
+                                contacts_to_import.append(c)
+                            for upd in preview['contacts']['update']:
+                                upd['data']['synced_to_hubspot'] = True
+                                upd['data']['last_sync_hubspot'] = datetime.now()
+                                contacts_to_import.append(upd['data'])
+
+                            if contacts_to_import:
+                                contacts_added, contacts_updated = contact_manager.import_from_hubspot(contacts_to_import)
+
+                        # Mise à jour des métadonnées
                         contact_manager.update_sync_metadata(
-                            sync_type=sync_type,
-                            contacts_synced=preview['total_fetched'],
-                            notes=f"Sync depuis {preview['since_days']} jours" if preview['is_incremental'] else None
+                            sync_type='hubspot_full',
+                            contacts_synced=preview['contacts']['total_fetched'],
+                            notes=f"Mode: {preview['mode']}"
                         )
 
                         progress_bar.progress(100)
-                        status_text.text("✅ Import terminé!")
+                        status_text.text("✅ Synchronisation terminée!")
 
+                        # Résumé
                         st.success(f"""
-                        ✅ **Import terminé !**
-                        - **{added}** nouveaux contacts importés
-                        - **{updated}** contacts mis à jour
-                        - **{len(preview['unchanged'])}** contacts inchangés
+                        ✅ **Synchronisation terminée !**
+
+                        **🏢 Entreprises:**
+                        - {companies_added} nouvelles
+                        - {companies_updated} mises à jour
+                        - {len(preview['companies']['unchanged'])} inchangées
+
+                        **👤 Contacts:**
+                        - {contacts_added} nouveaux
+                        - {contacts_updated} mis à jour
+                        - {len(preview['contacts']['unchanged'])} inchangés
                         """)
 
-                        st.session_state.hubspot_preview = None
+                        st.session_state.hubspot_sync_preview = None
                         st.balloons()
                         st.rerun()
 
@@ -782,15 +921,18 @@ with tab2:
         st.divider()
 
         # Stats HubSpot
-        st.markdown("**📊 Leads HubSpot dans la base**")
-        hubspot_in_base = stats.get('by_source', {}).get('hubspot', 0)
-        hubspot_synced = stats.get('hubspot_synced', 0)
+        st.markdown("**📊 Données HubSpot dans la base**")
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Importés depuis HubSpot", hubspot_in_base)
+            if COMPANY_SCHEMA_AVAILABLE:
+                st.metric("🏢 Entreprises HubSpot", company_stats.get('by_source', {}).get('hubspot', 0))
         with col2:
-            st.metric("Synchronisés vers HubSpot", hubspot_synced)
+            hubspot_in_base = stats.get('by_source', {}).get('hubspot', 0)
+            st.metric("👤 Contacts HubSpot", hubspot_in_base)
+        with col3:
+            hubspot_synced = stats.get('hubspot_synced', 0)
+            st.metric("↗️ Sync vers HubSpot", hubspot_synced)
 
 
 

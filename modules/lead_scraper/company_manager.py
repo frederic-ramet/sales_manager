@@ -391,6 +391,21 @@ class CompanyManager:
         # Chercher par website ou company_email
         return self.find_by_website(domain)
 
+    def find_by_hubspot_id(self, hubspot_company_id: str) -> Optional[Dict[str, Any]]:
+        """Trouve une entreprise par ID HubSpot."""
+        if not hubspot_company_id:
+            return None
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM companies WHERE hubspot_company_id = ? AND status = 'active'",
+                (str(hubspot_company_id),)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def find_by_name_exact(self, company_name: str) -> Optional[Dict[str, Any]]:
         """Trouve une entreprise par nom exact (case insensitive)."""
         if not company_name:
@@ -935,6 +950,112 @@ class CompanyManager:
                 LIMIT ?
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
+
+    def import_from_hubspot(self, companies: List[Dict[str, Any]]) -> Tuple[int, int]:
+        """
+        Importe des entreprises depuis HubSpot.
+
+        Matching hiérarchique:
+        1. hubspot_company_id (exact)
+        2. siren (exact)
+        3. website/domain (exact)
+        4. company_name (fuzzy, >90%)
+
+        Args:
+            companies: Liste de dicts HubSpot company
+
+        Returns:
+            Tuple (added, updated)
+        """
+        added = 0
+        updated = 0
+
+        # Mapping HubSpot → local
+        field_mapping = {
+            'name': 'company_name',
+            'company_name': 'company_name',
+            'domain': 'website',
+            'website': 'website',
+            'city': 'city',
+            'address': 'address',
+            'zip': 'postal_code',
+            'postal_code': 'postal_code',
+            'country': 'country',
+            'siren': 'siren',
+            'numberofemployees': 'employee_range',
+            'employee_range': 'employee_range',
+            'annualrevenue': 'revenue_range',
+            'revenue_range': 'revenue_range',
+            'industry': 'ape_label',
+            'hubspot_company_id': 'hubspot_company_id',
+            'id': 'hubspot_company_id',
+        }
+
+        for hs_company in companies:
+            # Normaliser les données
+            company_data = {}
+            for hs_key, local_key in field_mapping.items():
+                if hs_key in hs_company and hs_company[hs_key]:
+                    company_data[local_key] = hs_company[hs_key]
+
+            if not company_data.get('company_name'):
+                logger.warning(f"Company HubSpot sans nom, ignorée: {hs_company}")
+                continue
+
+            # Chercher entreprise existante
+            existing = None
+            hubspot_id = company_data.get('hubspot_company_id')
+            siren = company_data.get('siren')
+            website = company_data.get('website')
+            company_name = company_data.get('company_name')
+
+            # 1. Par hubspot_company_id
+            if hubspot_id:
+                existing = self.find_by_hubspot_id(hubspot_id)
+
+            # 2. Par SIREN
+            if not existing and siren:
+                existing = self.find_by_siren(siren)
+
+            # 3. Par website
+            if not existing and website:
+                existing = self.find_by_website(website)
+
+            # 4. Par nom fuzzy
+            if not existing and company_name:
+                fuzzy_matches = self.find_by_name_fuzzy(company_name, threshold=0.90, limit=1)
+                if fuzzy_matches:
+                    existing = fuzzy_matches[0]['company']
+
+            if existing:
+                # Mettre à jour l'entreprise existante
+                update_data = {}
+                for key, value in company_data.items():
+                    if value and key != 'hubspot_company_id':
+                        # Ne pas écraser si valeur existante
+                        if not existing.get(key) or existing.get(key) != value:
+                            update_data[key] = value
+
+                # Toujours mettre à jour le hubspot_company_id
+                if hubspot_id and existing.get('hubspot_company_id') != hubspot_id:
+                    update_data['hubspot_company_id'] = hubspot_id
+
+                if update_data:
+                    self.update_company(existing['id'], update_data)
+                    updated += 1
+                    logger.debug(f"Company mise à jour: {company_name}")
+            else:
+                # Créer une nouvelle entreprise
+                try:
+                    company_data['source'] = 'hubspot'
+                    self.create_company(company_data)
+                    added += 1
+                    logger.debug(f"Company créée: {company_name}")
+                except Exception as e:
+                    logger.warning(f"Erreur création company {company_name}: {e}")
+
+        logger.info(f"Import HubSpot companies: {added} ajoutées, {updated} mises à jour")
+        return added, updated
 
     # =========================================================================
     # CLASSIFICATION & SEGMENTATION (SIREN v2)
