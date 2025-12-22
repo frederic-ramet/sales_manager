@@ -533,7 +533,7 @@ with tab_csv:
             with col1:
                 segment = st.selectbox(
                     "Segment",
-                    ["ICP Principal", "ICP Opportuniste", "Test", "Custom"],
+                    ["TBD", "ICP Principal", "ICP Opportuniste", "Test", "Custom"],
                     index=0
                 )
 
