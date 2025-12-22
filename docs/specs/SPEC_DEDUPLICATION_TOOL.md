@@ -166,9 +166,9 @@ if name_score > 90:
 
 ## 4. Interface Utilisateur
 
-### 4.1 Nouvel onglet dans Base de Leads
+### 4.1 Section dans l'onglet Sync HubSpot
 
-Ajout d'une section dans l'onglet "🧹 Gestion" :
+Ajout d'une section dans l'onglet "🔄 Sync HubSpot" (après la sync bidirectionnelle) :
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -368,6 +368,25 @@ ALTER TABLE companies ADD COLUMN duplicate_checked_at TIMESTAMP;
 
 ## 6. Stratégie de Fusion
 
+### 6.0 Stratégie de suppression : Renommage "_todelete"
+
+**Principe** : Les doublons ne sont pas supprimés directement mais **renommés** avec le suffixe `_todelete` pour permettre :
+- Une vérification manuelle avant suppression définitive
+- Un nettoyage facile dans HubSpot (recherche "_todelete")
+- Une traçabilité des fusions
+
+**Convention de nommage :**
+```
+Entreprise : "Acme"           → "Acme_todelete"
+Contact    : "Jean Dupont"    → "Jean Dupont_todelete"
+```
+
+**Champs modifiés lors du marquage :**
+- `company_name` / `firstname` + `lastname` : Ajout du suffixe `_todelete`
+- `status` : `'merged'`
+- `merged_into` : ID du master
+- `merged_at` : Timestamp
+
 ### 6.1 Fusion Entreprises
 
 ```
@@ -388,7 +407,8 @@ website: "acme.fr"        ← Déjà présent
 city: "Paris"             ← Déjà présent
 contacts: [A, B, C, D, E] ← Tous transférés
 ─────────────────────────────────────────────────────────
-Doublon 1 et 2 → status = 'merged', merged_into = master.id
+Doublon 1 → company_name = "Acme_todelete", status = 'merged'
+Doublon 2 → company_name = "ACME S.A.S._todelete", status = 'merged'
 ```
 
 ### 6.2 Fusion Contacts
@@ -413,7 +433,45 @@ phone: "+33612345678"     ← Garde la valeur existante
 job_title: "Directeur"    ← Garde le master
 company_id: 42            ← Garde le master
 ─────────────────────────────────────────────────────────
-Doublon → status = 'merged', merged_into = master.id
+Doublon → lastname = "Dupont_todelete", status = 'merged'
+```
+
+### 6.3 Synchronisation HubSpot après fusion
+
+**Flux de synchronisation :**
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Fusion locale  │ ──► │  Sync HubSpot   │ ──► │  Clean HubSpot  │
+│  (Base SQLite)  │     │  (API update)   │     │  (manuel)       │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+**Actions automatiques après fusion :**
+
+1. **Mise à jour du master dans HubSpot** (si hubspot_id existe)
+   - Transfert des associations contacts → master company
+   - Mise à jour des données enrichies
+
+2. **Renommage des doublons dans HubSpot**
+   - `name` → `"Acme_todelete"`
+   - Permet filtrage facile : rechercher `_todelete` dans HubSpot
+   - Suppression manuelle par l'utilisateur
+
+**Exemple d'appel API HubSpot :**
+```python
+# Renommer le doublon dans HubSpot
+hubspot.update_company(
+    hubspot_company_id=doublon.hubspot_company_id,
+    properties={"name": f"{doublon.company_name}_todelete"}
+)
+
+# Transférer les contacts vers le master
+for contact in doublon.contacts:
+    hubspot.update_contact_company(
+        contact.hubspot_contact_id,
+        master.hubspot_company_id
+    )
 ```
 
 ---
@@ -462,23 +520,53 @@ Doublon → status = 'merged', merged_into = master.id
 |---------|---------------|
 | `modules/lead_scraper/company_manager.py` | +find_duplicates(), +merge_companies() |
 | `modules/lead_scraper/contact_manager.py` | +find_duplicates(), +merge_contacts(), +mark_as_homonyms() |
-| `pages/3_📜_Base_de_Leads.py` | Section déduplication dans onglet Gestion |
-| `database/schema.sql` | Table homonym_groups, colonnes supplémentaires |
+| `modules/lead_scraper/hubspot_client.py` | +update_company_name(), +reassign_contacts_to_company() |
+| `pages/3_📜_Base_de_Leads.py` | Section déduplication dans onglet **Sync HubSpot** |
+| `database/schema.sql` | Colonnes merged_into, merged_at |
 
 ---
 
-## 10. Questions Ouvertes
+## 10. Décisions Prises
 
-1. **Soft delete ou hard delete ?**
-   - Proposition : Soft delete (status='merged') pour traçabilité
-
-2. **Sync inverse vers HubSpot ?**
-   - Si fusion locale, faut-il fusionner aussi dans HubSpot ?
-   - Proposition : Phase 2, pour l'instant local seulement
-
-3. **Historique des fusions ?**
-   - Créer une table `merge_history` pour audit ?
+| Question | Décision |
+|----------|----------|
+| Soft delete ou hard delete ? | **Soft delete avec renommage `_todelete`** pour permettre hard delete manuel |
+| Sync vers HubSpot ? | **Oui** - Renommer les doublons en `_todelete` dans HubSpot pour nettoyage manuel |
+| Emplacement UI ? | **Onglet Sync HubSpot** (après la section sync bidirectionnelle) |
+| Historique des fusions ? | Colonnes `merged_into` et `merged_at` suffisantes pour traçabilité |
 
 ---
 
-*Document créé le 2025-12-22*
+## 11. Workflow Complet
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                    WORKFLOW DÉDUPLICATION                             │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  1. DÉTECTION                                                         │
+│     └─► Bouton "🔍 Détecter les doublons"                            │
+│         └─► Analyse locale (SQLite)                                   │
+│                                                                       │
+│  2. PREVIEW                                                           │
+│     └─► Affichage des groupes de doublons                            │
+│         └─► Score + raison (SIREN, website, nom fuzzy...)            │
+│                                                                       │
+│  3. FUSION (par groupe)                                               │
+│     └─► Choix du master                                               │
+│     └─► Confirmation                                                  │
+│         │                                                             │
+│         ├─► LOCAL : Transfert contacts, renommage "_todelete"        │
+│         │                                                             │
+│         └─► HUBSPOT : Renommage "_todelete", transfert associations  │
+│                                                                       │
+│  4. NETTOYAGE (manuel dans HubSpot)                                   │
+│     └─► Rechercher "_todelete"                                       │
+│     └─► Supprimer définitivement                                      │
+│                                                                       │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+*Document créé le 2025-12-22 - Mis à jour avec décisions validées*
