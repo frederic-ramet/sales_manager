@@ -593,7 +593,12 @@ with tab_csv:
                             continue
 
                         # Déterminer le company_id local
-                        if row['company_match'] and row['action'] == 'link':
+                        if row['action'] == 'update' and row.get('contact_match'):
+                            # Mise à jour d'un contact existant - utiliser son entreprise
+                            existing_contact = row['contact_match']
+                            company_id = existing_contact.get('company_id')
+                            company_data = row.get('company_match') or {}
+                        elif row['company_match'] and row['action'] in ('link', 'update'):
                             # Lier à l'entreprise existante
                             company_id = row['company_match']['id']
                             company_data = row['company_match']
@@ -705,9 +710,13 @@ with tab_csv:
                                     hs_company_id = hs_company.get('id')
                                     # Mettre à jour l'entreprise locale avec l'ID HubSpot
                                     if company_id:
-                                        company_manager.update_company(company_id, {
-                                            'hubspot_company_id': hs_company_id
-                                        })
+                                        try:
+                                            company_manager.update_company(company_id, {
+                                                'hubspot_company_id': hs_company_id
+                                            })
+                                        except Exception as update_err:
+                                            # hubspot_company_id peut déjà exister sur une autre entreprise
+                                            logger.warning(f"Impossible de lier hubspot_company_id {hs_company_id}: {update_err}")
 
                                 # 2. Créer le contact HubSpot
                                 contact_props = {

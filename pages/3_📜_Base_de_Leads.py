@@ -1250,7 +1250,7 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
                 st.divider()
 
                 # Actions batch
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
                     pappers_key = os.getenv('PAPPERS_API_KEY')
@@ -1331,6 +1331,22 @@ if COMPANY_SCHEMA_AVAILABLE and tab_entreprises is not None:
                             else:
                                 st.session_state.confirm_merge_companies = True
                                 st.warning("⚠️ Cliquez à nouveau pour confirmer")
+
+                with col4:
+                    if st.button("🗑️ Supprimer", use_container_width=True, disabled=(selected_count == 0), key="delete_companies"):
+                        if selected_count > 0:
+                            if st.session_state.get('confirm_delete_companies'):
+                                deleted = 0
+                                for company_id in selected_ids:
+                                    if company_manager.delete_company(company_id, hard_delete=True):
+                                        deleted += 1
+                                st.success(f"✅ {deleted} entreprise(s) supprimée(s)")
+                                del st.session_state.confirm_delete_companies
+                                st.session_state.company_search_results = None
+                                st.rerun()
+                            else:
+                                st.session_state.confirm_delete_companies = True
+                                st.warning(f"⚠️ Supprimer {selected_count} entreprise(s) ? Cliquez pour confirmer")
 
             # Export entreprises
             st.divider()
