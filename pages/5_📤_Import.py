@@ -670,6 +670,7 @@ with tab_csv:
                                     'job_title': row_data.get('job_title'),
                                     'linkedin_url': row_data.get('linkedin_url'),
                                     'notes': row_data.get('notes'),
+                                    'last_interaction_at': row_data.get('contact_date'),
                                 },
                                 source=source_name,
                                 company_id=company_id

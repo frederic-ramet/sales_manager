@@ -86,11 +86,14 @@ class CSVImporter:
             'observations', 'note'
         ],
         'source_file': ['source', 'origine', 'fichier source', 'provenance'],
+        'contact_date': [
+            'date envoi message', 'date_envoi', 'date contact', 'date',
+            'date premier contact', 'first_contact_date', 'contacted_at'
+        ],
     }
 
     # Colonnes qui ne seront pas importées mais conservées comme métadonnées
     METADATA_COLUMNS = [
-        'date envoi message', 'date_envoi', 'date contact', 'date',
         'statut', 'status', 'étape', 'stage'
     ]
 
