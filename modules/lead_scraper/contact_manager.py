@@ -433,11 +433,11 @@ class ContactManager:
         params = []
 
         if status:
-            conditions.append("status = ?")
+            conditions.append("contact_status = ?")
             params.append(status)
 
         if source:
-            conditions.append("source = ?")
+            conditions.append("contact_source = ?")
             params.append(source.lower())
 
         if campaign_id:
@@ -538,22 +538,22 @@ class ContactManager:
             cursor = conn.cursor()
 
             # Total actifs
-            cursor.execute("SELECT COUNT(*) FROM unified_contacts WHERE status = 'active'")
+            cursor.execute("SELECT COUNT(*) FROM unified_contacts WHERE contact_status = 'active'")
             total = cursor.fetchone()[0]
 
             # Par source
             cursor.execute("""
-                SELECT source, COUNT(*) as count
+                SELECT contact_source, COUNT(*) as count
                 FROM unified_contacts
-                WHERE status = 'active'
-                GROUP BY source
+                WHERE contact_status = 'active'
+                GROUP BY contact_source
             """)
             by_source = {row[0]: row[1] for row in cursor.fetchall()}
 
             # Synced HubSpot
             cursor.execute("""
                 SELECT COUNT(*) FROM unified_contacts
-                WHERE status = 'active' AND synced_to_hubspot = 1
+                WHERE contact_status = 'active' AND synced_to_hubspot = 1
             """)
             hubspot_synced = cursor.fetchone()[0]
 
@@ -564,7 +564,7 @@ class ContactManager:
             # Dernier contact
             cursor.execute("""
                 SELECT created_at FROM unified_contacts
-                WHERE status = 'active'
+                WHERE contact_status = 'active'
                 ORDER BY created_at DESC LIMIT 1
             """)
             row = cursor.fetchone()
@@ -574,7 +574,7 @@ class ContactManager:
             cursor.execute("""
                 SELECT campaign_id, COUNT(*) as count, MAX(created_at) as date
                 FROM unified_contacts
-                WHERE campaign_id IS NOT NULL AND status = 'active'
+                WHERE campaign_id IS NOT NULL AND contact_status = 'active'
                 GROUP BY campaign_id
                 ORDER BY date DESC
                 LIMIT 10
@@ -610,7 +610,7 @@ class ContactManager:
             # Codes APE distincts (non vides)
             cursor.execute("""
                 SELECT DISTINCT ape_code FROM unified_contacts
-                WHERE status = 'active' AND ape_code IS NOT NULL AND ape_code != ''
+                WHERE contact_status = 'active' AND ape_code IS NOT NULL AND ape_code != ''
                 ORDER BY ape_code
             """)
             ape_codes = [row[0] for row in cursor.fetchall()]
@@ -618,7 +618,7 @@ class ContactManager:
             # Départements distincts (2 premiers chiffres du code postal)
             cursor.execute("""
                 SELECT DISTINCT SUBSTR(postal_code, 1, 2) as dept FROM unified_contacts
-                WHERE status = 'active' AND postal_code IS NOT NULL AND LENGTH(postal_code) >= 2
+                WHERE contact_status = 'active' AND postal_code IS NOT NULL AND LENGTH(postal_code) >= 2
                 ORDER BY dept
             """)
             departements = [row[0] for row in cursor.fetchall()]
@@ -626,7 +626,7 @@ class ContactManager:
             # Villes distinctes
             cursor.execute("""
                 SELECT DISTINCT city FROM unified_contacts
-                WHERE status = 'active' AND city IS NOT NULL AND city != ''
+                WHERE contact_status = 'active' AND city IS NOT NULL AND city != ''
                 ORDER BY city
                 LIMIT 500
             """)
@@ -635,16 +635,16 @@ class ContactManager:
             # Campagnes
             cursor.execute("""
                 SELECT DISTINCT campaign_id FROM unified_contacts
-                WHERE status = 'active' AND campaign_id IS NOT NULL
+                WHERE contact_status = 'active' AND campaign_id IS NOT NULL
                 ORDER BY campaign_id DESC
             """)
             campaigns = [row[0] for row in cursor.fetchall()]
 
             # Sources
             cursor.execute("""
-                SELECT DISTINCT source FROM unified_contacts
-                WHERE status = 'active' AND source IS NOT NULL
-                ORDER BY source
+                SELECT DISTINCT contact_source FROM unified_contacts
+                WHERE contact_status = 'active' AND contact_source IS NOT NULL
+                ORDER BY contact_source
             """)
             sources = [row[0] for row in cursor.fetchall()]
 
@@ -688,7 +688,7 @@ class ContactManager:
             # 1. Par HubSpot ID
             if hubspot_contact_id:
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE hubspot_contact_id = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE hubspot_contact_id = ? AND contact_status = 'active'",
                     (hubspot_contact_id,)
                 )
                 row = cursor.fetchone()
@@ -698,7 +698,7 @@ class ContactManager:
             # 2. Par GetSales UUID
             if getsales_uuid:
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE getsales_uuid = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE getsales_uuid = ? AND contact_status = 'active'",
                     (getsales_uuid,)
                 )
                 row = cursor.fetchone()
@@ -710,7 +710,7 @@ class ContactManager:
                 # Normaliser l'URL LinkedIn
                 normalized = self._normalize_linkedin_url(linkedin_url)
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE linkedin_url = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE linkedin_url = ? AND contact_status = 'active'",
                     (normalized,)
                 )
                 row = cursor.fetchone()
@@ -721,7 +721,7 @@ class ContactManager:
             if email:
                 email_lower = email.lower().strip()
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE LOWER(email) = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE LOWER(email) = ? AND contact_status = 'active'",
                     (email_lower,)
                 )
                 row = cursor.fetchone()
@@ -731,7 +731,7 @@ class ContactManager:
             # 5. Par SIREN
             if siren:
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE siren = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE siren = ? AND contact_status = 'active'",
                     (siren,)
                 )
                 row = cursor.fetchone()
@@ -782,7 +782,7 @@ class ContactManager:
             # 1. Par HubSpot ID (high confidence)
             if hubspot_contact_id:
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE hubspot_contact_id = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE hubspot_contact_id = ? AND contact_status = 'active'",
                     (hubspot_contact_id,)
                 )
                 for row in cursor.fetchall():
@@ -798,7 +798,7 @@ class ContactManager:
             # 2. Par GetSales UUID (high confidence)
             if getsales_uuid:
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE getsales_uuid = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE getsales_uuid = ? AND contact_status = 'active'",
                     (getsales_uuid,)
                 )
                 for row in cursor.fetchall():
@@ -815,7 +815,7 @@ class ContactManager:
             if linkedin_url:
                 normalized = self._normalize_linkedin_url(linkedin_url)
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE linkedin_url = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE linkedin_url = ? AND contact_status = 'active'",
                     (normalized,)
                 )
                 for row in cursor.fetchall():
@@ -832,7 +832,7 @@ class ContactManager:
             if email:
                 email_lower = email.lower().strip()
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE LOWER(email) = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE LOWER(email) = ? AND contact_status = 'active'",
                     (email_lower,)
                 )
                 for row in cursor.fetchall():
@@ -848,7 +848,7 @@ class ContactManager:
             # 5. Par SIREN (medium confidence)
             if siren:
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE siren = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE siren = ? AND contact_status = 'active'",
                     (siren,)
                 )
                 for row in cursor.fetchall():
@@ -865,7 +865,7 @@ class ContactManager:
             if company_name:
                 company_normalized = company_name.lower().strip()
                 cursor.execute(
-                    "SELECT * FROM unified_contacts WHERE LOWER(company_name) = ? AND status = 'active'",
+                    "SELECT * FROM unified_contacts WHERE LOWER(company_name) = ? AND contact_status = 'active'",
                     (company_normalized,)
                 )
                 for row in cursor.fetchall():
@@ -888,7 +888,7 @@ class ContactManager:
                     WHERE LOWER(firstname) = ?
                     AND LOWER(lastname) = ?
                     AND LOWER(company_name) = ?
-                    AND status = 'active'
+                    AND contact_status = 'active'
                 """, (fn_lower, ln_lower, company_normalized))
                 for row in cursor.fetchall():
                     contact = dict(row)
@@ -921,7 +921,7 @@ class ContactManager:
             pattern = f"%{company_name}%"
             cursor.execute("""
                 SELECT * FROM unified_contacts
-                WHERE company_name LIKE ? AND status = 'active'
+                WHERE company_name LIKE ? AND contact_status = 'active'
                 ORDER BY company_name, lastname
                 LIMIT ?
             """, (pattern, limit))
@@ -1051,7 +1051,7 @@ class ContactManager:
             cursor = conn.cursor()
             placeholders = ','.join('?' * len(sirens))
             cursor.execute(
-                f"SELECT siren FROM unified_contacts WHERE siren IN ({placeholders}) AND status = 'active'",
+                f"SELECT siren FROM unified_contacts WHERE siren IN ({placeholders}) AND contact_status = 'active'",
                 sirens
             )
             return {row[0] for row in cursor.fetchall()}
@@ -1174,7 +1174,7 @@ class ContactManager:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM unified_contacts
-                WHERE status = 'active'
+                WHERE contact_status = 'active'
                   AND synced_to_hubspot = 0
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -1784,8 +1784,12 @@ class ContactManager:
         conditions = []
         params = []
 
+        # Column names differ between contacts table and unified_contacts view
+        status_col = "c.status" if table == 'contacts' else "c.contact_status"
+        source_col = "c.source" if table == 'contacts' else "c.contact_source"
+
         if status:
-            conditions.append("c.status = ?")
+            conditions.append(f"{status_col} = ?")
             params.append(status)
 
         if company_id is not None:
@@ -1797,7 +1801,7 @@ class ContactManager:
                 pass
 
         if source:
-            conditions.append("c.source = ?")
+            conditions.append(f"{source_col} = ?")
             params.append(source.lower())
 
         if query:
