@@ -740,6 +740,8 @@ with tab_csv:
 
                                     # 4. Créer une note dans HubSpot
                                     note_body = f"Importé depuis CSV ({source_name})"
+                                    if row_data.get('contact_date'):
+                                        note_body += f"\n📅 Date de contact: {row_data.get('contact_date')}"
                                     if row_data.get('notes'):
                                         note_body += f"\n\nNotes: {row_data.get('notes')}"
                                     hubspot_client.create_note(hs_contact_id, note_body)
