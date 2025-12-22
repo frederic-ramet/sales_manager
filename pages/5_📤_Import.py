@@ -718,41 +718,59 @@ with tab_csv:
                                             # hubspot_company_id peut déjà exister sur une autre entreprise
                                             logger.warning(f"Impossible de lier hubspot_company_id {hs_company_id}: {update_err}")
 
-                                # 2. Créer le contact HubSpot
-                                contact_props = {
-                                    'firstname': row_data.get('firstname'),
-                                    'lastname': row_data.get('lastname'),
-                                    'email': row_data.get('email'),
-                                    'phone': row_data.get('phone'),
-                                    'jobtitle': row_data.get('job_title'),
-                                }
-                                # Nettoyer les None
-                                contact_props = {k: v for k, v in contact_props.items() if v}
+                                # 2. Gérer le contact HubSpot (créer ou ignorer si existe)
+                                existing_hs_contact_id = None
+                                if row['action'] == 'update' and row.get('contact_match'):
+                                    # Si on met à jour un contact qui a déjà un hubspot_contact_id, ne pas recréer
+                                    existing_hs_contact_id = row['contact_match'].get('hubspot_contact_id')
 
-                                hs_contact = hubspot_client.create_contact(contact_props)
-
-                                if hs_contact:
-                                    hs_contact_id = hs_contact.get('id')
-
-                                    # 3. Associer contact à l'entreprise HubSpot
-                                    if hs_company_id:
-                                        hubspot_client.associate_contact_company(hs_contact_id, hs_company_id)
-
-                                    # 4. Créer une note dans HubSpot
-                                    note_body = f"Importé depuis CSV ({source_name})"
+                                if existing_hs_contact_id:
+                                    # Contact existe déjà dans HubSpot - juste ajouter une note
+                                    hs_contact_id = existing_hs_contact_id
+                                    note_body = f"Mis à jour depuis CSV ({source_name})"
                                     if row_data.get('contact_date'):
                                         note_body += f"\n📅 Date de contact: {row_data.get('contact_date')}"
                                     if row_data.get('notes'):
                                         note_body += f"\n\nNotes: {row_data.get('notes')}"
                                     hubspot_client.create_note(hs_contact_id, note_body)
-
-                                    # 5. Mettre à jour le contact local
-                                    contact_manager.update_contact(contact_uuid, {
-                                        'hubspot_contact_id': hs_contact_id
-                                    })
-
                                     hubspot_synced += 1
-                                    status.text(f"Synced HubSpot: {row_data.get('company_name', 'N/A')}")
+                                    status.text(f"Note HubSpot: {row_data.get('company_name', 'N/A')}")
+                                else:
+                                    # Créer nouveau contact HubSpot
+                                    contact_props = {
+                                        'firstname': row_data.get('firstname'),
+                                        'lastname': row_data.get('lastname'),
+                                        'email': row_data.get('email'),
+                                        'phone': row_data.get('phone'),
+                                        'jobtitle': row_data.get('job_title'),
+                                    }
+                                    # Nettoyer les None
+                                    contact_props = {k: v for k, v in contact_props.items() if v}
+
+                                    hs_contact = hubspot_client.create_contact(contact_props)
+
+                                    if hs_contact:
+                                        hs_contact_id = hs_contact.get('id')
+
+                                        # 3. Associer contact à l'entreprise HubSpot
+                                        if hs_company_id:
+                                            hubspot_client.associate_contact_company(hs_contact_id, hs_company_id)
+
+                                        # 4. Créer une note dans HubSpot
+                                        note_body = f"Importé depuis CSV ({source_name})"
+                                        if row_data.get('contact_date'):
+                                            note_body += f"\n📅 Date de contact: {row_data.get('contact_date')}"
+                                        if row_data.get('notes'):
+                                            note_body += f"\n\nNotes: {row_data.get('notes')}"
+                                        hubspot_client.create_note(hs_contact_id, note_body)
+
+                                        # 5. Mettre à jour le contact local
+                                        contact_manager.update_contact(contact_uuid, {
+                                            'hubspot_contact_id': hs_contact_id
+                                        })
+
+                                        hubspot_synced += 1
+                                        status.text(f"Synced HubSpot: {row_data.get('company_name', 'N/A')}")
 
                             except Exception as hs_error:
                                 logger.warning(f"Erreur sync HubSpot pour {row_data.get('email')}: {hs_error}")
