@@ -268,12 +268,35 @@ class ContactManager:
         Returns:
             True si mis à jour, False sinon
         """
-        # Mapping des clés vers les colonnes
-        field_mapping = {
-            'siren': 'siren',
-            'siret': 'siret',
+        table = self._get_table_name()
+
+        # Champs contact (disponibles dans la table contacts)
+        contact_fields = {
             'getsales_uuid': 'getsales_uuid',
             'hubspot_contact_id': 'hubspot_contact_id',
+            'firstname': 'firstname',
+            'lastname': 'lastname',
+            'email': 'email',
+            'phone': 'phone',
+            'telephone': 'phone',
+            'mobile': 'mobile',
+            'job_title': 'job_title',
+            'linkedin_url': 'linkedin_url',
+            'linkedin_headline': 'linkedin_headline',
+            'synced_to_hubspot': 'synced_to_hubspot',
+            'last_sync_hubspot': 'last_sync_hubspot',
+            'prospection_status': 'prospection_status',
+            'messages_sent': 'messages_sent',
+            'messages_received': 'messages_received',
+            'last_interaction_at': 'last_interaction_at',
+            'status': 'status',
+            'notes': 'notes',
+        }
+
+        # Champs entreprise (seulement si table unified_contacts ou pour mise à jour company)
+        company_fields = {
+            'siren': 'siren',
+            'siret': 'siret',
             'hubspot_company_id': 'hubspot_company_id',
             'company_name': 'company_name',
             'denomination': 'company_name',
@@ -290,26 +313,17 @@ class ContactManager:
             'employee_range': 'employee_range',
             'revenue_range': 'revenue_range',
             'website': 'website',
-            'firstname': 'firstname',
-            'lastname': 'lastname',
-            'email': 'email',
-            'phone': 'phone',
-            'telephone': 'phone',
-            'mobile': 'mobile',
-            'job_title': 'job_title',
-            'linkedin_url': 'linkedin_url',
-            'linkedin_headline': 'linkedin_headline',
             'enriched_at': 'enriched_at',
             'enrichment_source': 'enrichment_source',
-            'synced_to_hubspot': 'synced_to_hubspot',
-            'last_sync_hubspot': 'last_sync_hubspot',
-            'prospection_status': 'prospection_status',
-            'messages_sent': 'messages_sent',
-            'messages_received': 'messages_received',
-            'last_interaction_at': 'last_interaction_at',
-            'status': 'status',
-            'notes': 'notes',
         }
+
+        # Choisir les champs selon la table
+        if table == 'contacts':
+            # Nouveau schéma: seulement les champs contact
+            field_mapping = contact_fields
+        else:
+            # Ancien schéma: tous les champs
+            field_mapping = {**contact_fields, **company_fields}
 
         fields_to_update = []
         values = []
@@ -330,8 +344,6 @@ class ContactManager:
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            # Utiliser la bonne table selon le schéma
-            table = self._get_table_name()
             query = f"UPDATE {table} SET {', '.join(fields_to_update)} WHERE uuid = ?"
             cursor.execute(query, values)
             conn.commit()
