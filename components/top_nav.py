@@ -9,9 +9,9 @@ from pathlib import Path
 # Pages disponibles (navigation principale)
 PAGES = [
     {"icon": "🏭", "name": "Accueil", "path": "app.py"},
-    {"icon": "🎯", "name": "Ajout Leads SIRENE", "path": "pages/2_🎯_Recherche_Leads.py"},
     {"icon": "📜", "name": "Base Leads", "path": "pages/3_📜_Base_de_Leads.py"},
-    {"icon": "📤", "name": "Import", "path": "pages/5_📤_Import.py"},
+    {"icon": "📤", "name": "Importer", "path": "pages/5_📤_Import.py"},
+    {"icon": "🎯", "name": "Enrichir", "path": "pages/2_🎯_Recherche_Leads.py"},
 ]
 
 # Utilitaires (footer)
