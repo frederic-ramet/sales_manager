@@ -365,14 +365,16 @@ class ContactManager:
         Returns:
             True si supprimé
         """
+        table = self._get_table_name()
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
 
             if hard_delete:
-                cursor.execute("DELETE FROM unified_contacts WHERE uuid = ?", (contact_uuid,))
+                cursor.execute(f"DELETE FROM {table} WHERE uuid = ?", (contact_uuid,))
             else:
                 cursor.execute(
-                    "UPDATE unified_contacts SET contact_status = 'deleted', updated_at = ? WHERE uuid = ?",
+                    f"UPDATE {table} SET status = 'deleted', updated_at = ? WHERE uuid = ?",
                     (datetime.now(), contact_uuid)
                 )
 
@@ -1148,10 +1150,12 @@ class ContactManager:
         Returns:
             True si mis à jour
         """
+        table = self._get_table_name()
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE unified_contacts
+            cursor.execute(f"""
+                UPDATE {table}
                 SET hubspot_contact_id = ?, synced_to_hubspot = 1, last_sync_hubspot = ?, updated_at = ?
                 WHERE uuid = ?
             """, (hubspot_id, datetime.now(), datetime.now(), contact_uuid))
@@ -1362,9 +1366,11 @@ class ContactManager:
         if not confirm:
             raise ValueError("Confirmation requise: clear_all(confirm=True)")
 
+        table = self._get_table_name()
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM unified_contacts")
+            cursor.execute(f"DELETE FROM {table}")
             deleted = cursor.rowcount
             conn.commit()
 
@@ -1381,10 +1387,12 @@ class ContactManager:
         Returns:
             Nombre de contacts supprimés
         """
+        table = self._get_table_name()
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "DELETE FROM unified_contacts WHERE campaign_id = ?",
+                f"DELETE FROM {table} WHERE campaign_id = ?",
                 (campaign_id,)
             )
             deleted = cursor.rowcount
@@ -1403,12 +1411,14 @@ class ContactManager:
         Returns:
             Nombre de contacts archivés
         """
+        table = self._get_table_name()
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE unified_contacts
-                SET contact_status = 'archived', updated_at = ?
-                WHERE contact_status = 'active'
+            cursor.execute(f"""
+                UPDATE {table}
+                SET status = 'archived', updated_at = ?
+                WHERE status = 'active'
                   AND created_at < datetime('now', '-' || ? || ' days')
             """, (datetime.now(), older_than_days))
             archived = cursor.rowcount
