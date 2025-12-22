@@ -568,7 +568,7 @@ with tab2:
                 import_limit = st.number_input(
                     "Nombre max à importer",
                     min_value=10,
-                    max_value=1000,
+                    max_value=10000,
                     value=100,
                     step=10,
                     help="Pour éviter de surcharger, limitez le nombre de contacts"
@@ -576,9 +576,15 @@ with tab2:
 
         st.divider()
 
-        # Bouton import
-        button_label = "⚡ Sync incrémentale" if sync_mode == "🔄 Sync incrémentale" else "🔄 Sync complète"
-        if st.button(button_label, type="primary", use_container_width=True):
+        # Initialize session state for preview
+        if 'hubspot_preview' not in st.session_state:
+            st.session_state.hubspot_preview = None
+
+        # Step 1: Analyze button
+        is_incremental = sync_mode == "🔄 Sync incrémentale"
+        analyze_label = "🔍 Analyser les changements"
+
+        if st.button(analyze_label, type="secondary", use_container_width=True):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -587,99 +593,193 @@ with tab2:
                 progress_bar.progress(10)
 
                 with HubSpotClient() as hubspot:
-                    # Tester la connexion
                     success, msg = hubspot.test_connection()
                     if not success:
                         st.error(f"❌ {msg}")
+                        st.session_state.hubspot_preview = None
                     else:
-                        # Choisir le mode de sync
-                        is_incremental = sync_mode == "🔄 Sync incrémentale"
-
+                        # Fetch contacts from HubSpot
                         if is_incremental:
-                            status_text.text(f"⚡ Sync incrémentale ({since_days} jours)...")
+                            status_text.text(f"⚡ Récupération des contacts modifiés ({since_days} jours)...")
                             progress_bar.progress(20)
-
-                            def progress_callback(current, phase):
-                                progress_bar.progress(min(20 + int(current / 10), 80))
-                                status_text.text(f"📥 {current} contacts modifiés récupérés...")
-
-                            sync_result = hubspot.sync_recent_contacts(
-                                since_days=since_days,
-                                progress_callback=progress_callback
-                            )
+                            sync_result = hubspot.sync_recent_contacts(since_days=since_days)
+                            hubspot_contacts = sync_result.get('contacts', [])
                         else:
-                            status_text.text("📥 Sync complète...")
+                            status_text.text("📥 Récupération des contacts HubSpot...")
                             progress_bar.progress(20)
-
-                            def progress_callback(current, phase):
-                                progress_bar.progress(min(20 + int(current / 10), 80))
-                                status_text.text(f"📥 {current} contacts récupérés...")
-
-                            sync_result = hubspot.sync_contacts(progress_callback=progress_callback)
-
-                        if sync_result['success']:
-                            status_text.text("💾 Import dans la base locale...")
-                            progress_bar.progress(85)
-
-                            # Récupérer les contacts
-                            if is_incremental:
-                                hubspot_contacts = sync_result.get('contacts', [])
-                            else:
+                            sync_result = hubspot.sync_contacts()
+                            if sync_result['success']:
                                 mirror = hubspot.get_mirror()
                                 hubspot_contacts = mirror.get('contacts', [])
-
-                                # Limiter si demandé
                                 if import_limit and import_limit < len(hubspot_contacts):
                                     hubspot_contacts = hubspot_contacts[:import_limit]
+                            else:
+                                hubspot_contacts = []
 
-                            # Convertir au format unified_contacts
-                            contacts_to_import = []
-                            for hc in hubspot_contacts:
-                                contacts_to_import.append({
-                                    'hubspot_contact_id': hc.get('hubspot_id') or hc.get('id'),
-                                    'company_name': hc.get('denomination') or hc.get('company'),
-                                    'email': hc.get('email'),
-                                    'phone': hc.get('telephone') or hc.get('phone'),
-                                    'firstname': hc.get('dirigeant', '').split(' ')[0] if hc.get('dirigeant') else hc.get('firstname'),
-                                    'lastname': ' '.join(hc.get('dirigeant', '').split(' ')[1:]) if hc.get('dirigeant') else hc.get('lastname'),
-                                    'job_title': hc.get('fonction') or hc.get('jobtitle'),
-                                    'siren': hc.get('siren'),
-                                    'ape_code': hc.get('code_ape'),
-                                    'city': hc.get('ville') or hc.get('city'),
-                                    'address': hc.get('adresse') or hc.get('address'),
-                                    'postal_code': hc.get('code_postal') or hc.get('zip'),
-                                    'synced_to_hubspot': True,
-                                    'last_sync_hubspot': datetime.now(),
-                                })
+                        progress_bar.progress(60)
+                        status_text.text("🔍 Analyse des doublons...")
 
-                            # Importer dans unified_contacts
-                            added, updated = contact_manager.import_from_hubspot(contacts_to_import)
+                        # Analyze each contact
+                        new_contacts = []
+                        update_contacts = []
+                        unchanged_contacts = []
 
-                            # Enregistrer métadonnées de sync
-                            sync_type = 'hubspot_incremental' if is_incremental else 'hubspot_full'
-                            contact_manager.update_sync_metadata(
-                                sync_type=sync_type,
-                                contacts_synced=len(hubspot_contacts),
-                                notes=f"Sync depuis {since_days} jours" if is_incremental else None
+                        for hc in hubspot_contacts:
+                            contact_data = {
+                                'hubspot_contact_id': hc.get('hubspot_id') or hc.get('id'),
+                                'company_name': hc.get('denomination') or hc.get('company'),
+                                'email': hc.get('email'),
+                                'phone': hc.get('telephone') or hc.get('phone'),
+                                'firstname': hc.get('dirigeant', '').split(' ')[0] if hc.get('dirigeant') else hc.get('firstname'),
+                                'lastname': ' '.join(hc.get('dirigeant', '').split(' ')[1:]) if hc.get('dirigeant') else hc.get('lastname'),
+                                'job_title': hc.get('fonction') or hc.get('jobtitle'),
+                                'siren': hc.get('siren'),
+                                'ape_code': hc.get('code_ape'),
+                                'city': hc.get('ville') or hc.get('city'),
+                                'address': hc.get('adresse') or hc.get('address'),
+                                'postal_code': hc.get('code_postal') or hc.get('zip'),
+                            }
+
+                            # Check for existing contact
+                            existing = contact_manager.find_duplicate(
+                                hubspot_contact_id=contact_data.get('hubspot_contact_id'),
+                                email=contact_data.get('email')
                             )
 
-                            progress_bar.progress(100)
-                            status_text.text("✅ Import terminé!")
+                            if existing:
+                                # Check if there are differences
+                                has_changes = False
+                                changes = []
+                                for key in ['firstname', 'lastname', 'email', 'phone', 'company_name', 'job_title']:
+                                    new_val = contact_data.get(key)
+                                    old_val = existing.get(key)
+                                    if new_val and new_val != old_val:
+                                        has_changes = True
+                                        changes.append(f"{key}: {old_val} → {new_val}")
 
-                            mode_label = f"incrémentale ({since_days} jours)" if is_incremental else "complète"
-                            st.success(f"""
-                            ✅ Sync HubSpot {mode_label} terminée !
-                            - **{sync_result['total_contacts']}** contacts récupérés
-                            - **{added}** nouveaux contacts importés
-                            - **{updated}** contacts mis à jour
-                            """)
-                            st.rerun()
-                        else:
-                            st.error("❌ Erreur lors de la synchronisation HubSpot")
+                                if has_changes:
+                                    update_contacts.append({
+                                        'data': contact_data,
+                                        'existing': existing,
+                                        'changes': changes
+                                    })
+                                else:
+                                    unchanged_contacts.append(contact_data)
+                            else:
+                                new_contacts.append(contact_data)
+
+                        progress_bar.progress(100)
+                        status_text.text("✅ Analyse terminée")
+
+                        # Store preview in session state
+                        st.session_state.hubspot_preview = {
+                            'new': new_contacts,
+                            'update': update_contacts,
+                            'unchanged': unchanged_contacts,
+                            'total_fetched': len(hubspot_contacts),
+                            'is_incremental': is_incremental,
+                            'since_days': since_days if is_incremental else None,
+                        }
 
             except Exception as e:
                 st.error(f"❌ Erreur: {e}")
-                progress_bar.progress(0)
+                st.session_state.hubspot_preview = None
+
+        # Display preview if available
+        if st.session_state.hubspot_preview:
+            preview = st.session_state.hubspot_preview
+
+            st.divider()
+            st.subheader("📋 Preview des changements")
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("📥 Récupérés", preview['total_fetched'])
+            with col2:
+                st.metric("🆕 Nouveaux", len(preview['new']), delta=f"+{len(preview['new'])}" if preview['new'] else None)
+            with col3:
+                st.metric("🔄 À mettre à jour", len(preview['update']), delta=f"~{len(preview['update'])}" if preview['update'] else None)
+            with col4:
+                st.metric("✅ Inchangés", len(preview['unchanged']))
+
+            # Show details
+            if preview['new']:
+                with st.expander(f"🆕 **{len(preview['new'])} nouveaux contacts** (cliquer pour voir)", expanded=False):
+                    new_df = pd.DataFrame(preview['new'])
+                    cols_to_show = ['firstname', 'lastname', 'email', 'company_name', 'job_title']
+                    cols_to_show = [c for c in cols_to_show if c in new_df.columns]
+                    st.dataframe(new_df[cols_to_show].head(20), use_container_width=True, hide_index=True)
+                    if len(preview['new']) > 20:
+                        st.caption(f"... et {len(preview['new']) - 20} autres")
+
+            if preview['update']:
+                with st.expander(f"🔄 **{len(preview['update'])} contacts à mettre à jour** (cliquer pour voir)", expanded=False):
+                    for i, upd in enumerate(preview['update'][:10]):
+                        name = f"{upd['data'].get('firstname', '')} {upd['data'].get('lastname', '')}".strip()
+                        st.markdown(f"**{name}** ({upd['data'].get('email', 'N/A')})")
+                        for change in upd['changes'][:3]:
+                            st.caption(f"  • {change}")
+                        if i < len(preview['update']) - 1:
+                            st.markdown("---")
+                    if len(preview['update']) > 10:
+                        st.caption(f"... et {len(preview['update']) - 10} autres")
+
+            st.divider()
+
+            # Confirm button
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("❌ Annuler", use_container_width=True):
+                    st.session_state.hubspot_preview = None
+                    st.rerun()
+
+            with col2:
+                if st.button("✅ Confirmer l'import", type="primary", use_container_width=True):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+
+                    try:
+                        # Prepare contacts to import
+                        contacts_to_import = []
+                        for c in preview['new']:
+                            c['synced_to_hubspot'] = True
+                            c['last_sync_hubspot'] = datetime.now()
+                            contacts_to_import.append(c)
+                        for upd in preview['update']:
+                            upd['data']['synced_to_hubspot'] = True
+                            upd['data']['last_sync_hubspot'] = datetime.now()
+                            contacts_to_import.append(upd['data'])
+
+                        status_text.text("💾 Import en cours...")
+                        progress_bar.progress(50)
+
+                        # Import
+                        added, updated = contact_manager.import_from_hubspot(contacts_to_import)
+
+                        # Update sync metadata
+                        sync_type = 'hubspot_incremental' if preview['is_incremental'] else 'hubspot_full'
+                        contact_manager.update_sync_metadata(
+                            sync_type=sync_type,
+                            contacts_synced=preview['total_fetched'],
+                            notes=f"Sync depuis {preview['since_days']} jours" if preview['is_incremental'] else None
+                        )
+
+                        progress_bar.progress(100)
+                        status_text.text("✅ Import terminé!")
+
+                        st.success(f"""
+                        ✅ **Import terminé !**
+                        - **{added}** nouveaux contacts importés
+                        - **{updated}** contacts mis à jour
+                        - **{len(preview['unchanged'])}** contacts inchangés
+                        """)
+
+                        st.session_state.hubspot_preview = None
+                        st.balloons()
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ Erreur: {e}")
 
         st.divider()
 
