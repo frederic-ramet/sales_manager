@@ -89,120 +89,230 @@ tab_vue, tab_import, tab_clean, tab_enrich, tab_sync = st.tabs([
 # TAB 1: VUE (Dashboard)
 # =============================================================================
 with tab_vue:
-    st.subheader("Vue d'ensemble")
+    st.subheader("📊 Vue d'ensemble")
 
-    # Métriques principales
+    # Métriques principales avec delta
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric("🏢 Entreprises", company_stats.get('total', 0))
+        total_companies = company_stats.get('total', 0)
+        st.metric("🏢 Entreprises", total_companies)
 
     with col2:
-        st.metric("👤 Contacts", contact_stats.get('total', 0))
+        total_contacts = contact_stats.get('total', 0)
+        st.metric("👤 Contacts", total_contacts)
 
     with col3:
-        st.metric("💬 Interactions", interaction_stats.get('total', 0))
+        total_interactions = interaction_stats.get('total', 0)
+        st.metric("💬 Interactions", total_interactions)
 
     with col4:
-        synced = company_stats.get('total', 0) - company_stats.get('to_sync', 0)
-        st.metric("🔄 Synced HubSpot", synced)
+        synced = total_companies - company_stats.get('to_sync', 0)
+        sync_pct = round(synced / total_companies * 100) if total_companies > 0 else 0
+        st.metric("🔄 Synced", f"{synced} ({sync_pct}%)")
 
     st.divider()
 
-    # Stats par source
+    # Pipeline Status - visuel
+    st.markdown("### 📈 Statut Pipeline")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    # Calculer les stats pipeline
+    to_clean = len(company_manager.find_duplicates(limit=100))
+    to_enrich = company_stats.get('to_enrich', 0)
+    to_sync = company_stats.get('to_sync', 0)
+    enriched = total_companies - to_enrich if total_companies > 0 else 0
+
+    with col1:
+        st.markdown("**📥 Importés**")
+        st.markdown(f"### {total_companies}")
+        st.caption("Entreprises")
+
+    with col2:
+        clean_color = "🟢" if to_clean == 0 else "🟡" if to_clean < 10 else "🔴"
+        st.markdown(f"**🧹 À nettoyer** {clean_color}")
+        st.markdown(f"### {to_clean}")
+        st.caption("Groupes doublons")
+
+    with col3:
+        enrich_pct = round(enriched / total_companies * 100) if total_companies > 0 else 0
+        st.markdown("**🔍 Enrichis**")
+        st.markdown(f"### {enriched}")
+        st.caption(f"{enrich_pct}% du total")
+
+    with col4:
+        st.markdown("**🔄 À synchroniser**")
+        st.markdown(f"### {to_sync}")
+        st.caption("Vers HubSpot")
+
+    st.divider()
+
+    # Stats détaillées en 2 colonnes
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("**📁 Par Source**")
+        st.markdown("### 📁 Par Source")
         by_source = company_stats.get('by_source', {})
         if by_source:
-            for source, count in by_source.items():
-                st.write(f"• {source}: {count}")
+            # Afficher sous forme de tableau
+            source_data = [{'Source': k, 'Count': v} for k, v in sorted(by_source.items(), key=lambda x: -x[1])]
+            st.dataframe(source_data, use_container_width=True, hide_index=True)
         else:
-            st.write("Aucune donnée")
+            st.info("Aucune donnée importée")
 
     with col2:
-        st.markdown("**📈 Statut Pipeline**")
-        st.write(f"• À nettoyer: {company_manager.find_duplicates(limit=1).__len__()} groupes")
-        st.write(f"• À enrichir: {company_stats.get('to_enrich', 0)}")
-        st.write(f"• À synchroniser: {company_stats.get('to_sync', 0)}")
+        st.markdown("### 👤 Contacts")
+        contact_with_email = contact_stats.get('email_verified', 0)
+        contact_without_company = contact_stats.get('without_company', 0)
+
+        st.write(f"• Total: **{total_contacts}**")
+        st.write(f"• Avec email vérifié: **{contact_with_email}**")
+        st.write(f"• Sans entreprise: **{contact_without_company}**")
+        st.write(f"• À synchroniser: **{contact_stats.get('to_sync', 0)}**")
 
     st.divider()
 
-    # Recherche
-    st.subheader("🔍 Recherche")
+    # Recherche avancée
+    st.markdown("### 🔍 Recherche & Exploration")
 
-    col1, col2, col3 = st.columns([2, 1, 1])
+    # Filtres en ligne
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
 
     with col1:
-        search_term = st.text_input("Rechercher", placeholder="Nom, SIREN, email...")
+        search_term = st.text_input("🔍 Recherche", placeholder="Nom, SIREN, email, domain...")
 
     with col2:
         search_type = st.selectbox("Type", ["Entreprises", "Contacts"])
 
     with col3:
-        limit = st.selectbox("Limite", [50, 100, 200, 500], index=1)
+        by_source_options = ["Toutes"] + list(company_stats.get('by_source', {}).keys())
+        filter_source = st.selectbox("Source", by_source_options)
 
-    if st.button("🔍 Chercher", type="primary"):
+    with col4:
+        filter_status = st.selectbox("Statut", ["Tous", "Enrichis", "Non enrichis", "Synced", "Non synced"])
+
+    with col5:
+        limit = st.selectbox("Limite", [25, 50, 100, 200, 500], index=1)
+
+    # Bouton de recherche
+    search_clicked = st.button("🔍 Rechercher", type="primary", use_container_width=True)
+
+    if search_clicked or search_term:
         if search_type == "Entreprises":
+            # Recherche entreprises
             if search_term:
                 # Recherche par SIREN
                 result = company_manager.find_by_siren(search_term)
                 if result:
-                    st.success(f"Trouvé par SIREN: {result['name']}")
-                    st.json(result)
+                    st.success(f"✅ Trouvé par SIREN: **{result['name']}**")
+                    with st.expander("📋 Détails", expanded=True):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**Nom:** {result.get('name')}")
+                            st.write(f"**SIREN:** {result.get('siren')}")
+                            st.write(f"**Domain:** {result.get('domain')}")
+                            st.write(f"**Ville:** {result.get('hq_city')}")
+                        with col2:
+                            st.write(f"**Taille:** {result.get('size')}")
+                            st.write(f"**Secteur:** {result.get('industry')}")
+                            st.write(f"**Source:** {result.get('source')}")
+                            st.write(f"**Enrichi:** {'✅' if result.get('enriched_at') else '❌'}")
+
+                        # Contacts de cette entreprise
+                        contacts = contact_manager.list_all(limit=100)
+                        company_contacts = [c for c in contacts if c.get('company_uuid') == result['uuid']]
+                        if company_contacts:
+                            st.markdown("**👤 Contacts:**")
+                            st.dataframe([{
+                                'Nom': f"{c.get('firstname', '')} {c.get('lastname', '')}",
+                                'Email': c.get('email'),
+                                'Fonction': c.get('job_title')
+                            } for c in company_contacts], use_container_width=True, hide_index=True)
                 else:
-                    # Recherche par nom
-                    result = company_manager.find_by_name_fuzzy(search_term, threshold=0.5)
+                    # Recherche par domain
+                    result = company_manager.find_by_domain(search_term)
                     if result:
-                        st.success(f"Trouvé par nom: {result['name']}")
+                        st.success(f"✅ Trouvé par domain: **{result['name']}**")
                         st.json(result)
                     else:
-                        st.warning("Aucun résultat")
+                        # Recherche fuzzy par nom
+                        result = company_manager.find_by_name_fuzzy(search_term, threshold=0.5)
+                        if result:
+                            st.success(f"✅ Trouvé par nom: **{result['name']}**")
+                            st.json(result)
+                        else:
+                            st.warning("Aucun résultat trouvé")
             else:
-                # Liste
-                companies = company_manager.list_all(limit=limit)
+                # Liste avec filtres
+                companies = company_manager.list_all(
+                    status='active',
+                    source=filter_source if filter_source != "Toutes" else None,
+                    limit=limit
+                )
+
+                # Appliquer filtre status
+                if filter_status == "Enrichis":
+                    companies = [c for c in companies if c.get('enriched_at')]
+                elif filter_status == "Non enrichis":
+                    companies = [c for c in companies if not c.get('enriched_at')]
+                elif filter_status == "Synced":
+                    companies = [c for c in companies if c.get('synced_to_hubspot')]
+                elif filter_status == "Non synced":
+                    companies = [c for c in companies if not c.get('synced_to_hubspot')]
+
                 if companies:
-                    df = st.dataframe(
-                        [{
-                            'Nom': c.get('name'),
-                            'Domain': c.get('domain'),
-                            'SIREN': c.get('siren'),
-                            'Ville': c.get('hq_city'),
-                            'Source': c.get('source')
-                        } for c in companies],
-                        use_container_width=True
-                    )
+                    st.write(f"**{len(companies)}** entreprises affichées")
+                    st.dataframe([{
+                        'Nom': c.get('name'),
+                        'Domain': c.get('domain'),
+                        'SIREN': c.get('siren'),
+                        'Ville': c.get('hq_city'),
+                        'Taille': c.get('size'),
+                        'Source': c.get('source'),
+                        'Enrichi': '✅' if c.get('enriched_at') else '❌',
+                        'Synced': '✅' if c.get('synced_to_hubspot') else '❌'
+                    } for c in companies], use_container_width=True, hide_index=True)
                 else:
-                    st.info("Aucune entreprise")
+                    st.info("Aucune entreprise trouvée avec ces filtres")
+
         else:
+            # Recherche contacts
             if search_term:
+                # Par email
                 result = contact_manager.find_by_email(search_term)
                 if result:
-                    st.success(f"Trouvé: {result.get('firstname')} {result.get('lastname')}")
+                    st.success(f"✅ Trouvé par email: **{result.get('firstname')} {result.get('lastname')}**")
                     st.json(result)
                 else:
+                    # Par LinkedIn
                     result = contact_manager.find_by_linkedin(search_term)
                     if result:
-                        st.success(f"Trouvé: {result.get('firstname')} {result.get('lastname')}")
+                        st.success(f"✅ Trouvé par LinkedIn: **{result.get('firstname')} {result.get('lastname')}**")
                         st.json(result)
                     else:
-                        st.warning("Aucun résultat")
+                        st.warning("Aucun résultat trouvé")
             else:
-                contacts = contact_manager.list_all(limit=limit)
+                # Liste contacts
+                contacts = contact_manager.list_all(
+                    status='active',
+                    source=filter_source if filter_source != "Toutes" else None,
+                    limit=limit
+                )
+
                 if contacts:
-                    st.dataframe(
-                        [{
-                            'Prénom': c.get('firstname'),
-                            'Nom': c.get('lastname'),
-                            'Email': c.get('email'),
-                            'Fonction': c.get('job_title'),
-                            'Source': c.get('source')
-                        } for c in contacts],
-                        use_container_width=True
-                    )
+                    st.write(f"**{len(contacts)}** contacts affichés")
+                    st.dataframe([{
+                        'Prénom': c.get('firstname'),
+                        'Nom': c.get('lastname'),
+                        'Email': c.get('email'),
+                        'Fonction': c.get('job_title'),
+                        'Entreprise': c.get('company_uuid', '')[:8] if c.get('company_uuid') else '-',
+                        'Source': c.get('source'),
+                        'Synced': '✅' if c.get('synced_to_hubspot') else '❌'
+                    } for c in contacts], use_container_width=True, hide_index=True)
                 else:
-                    st.info("Aucun contact")
+                    st.info("Aucun contact trouvé")
 
 # =============================================================================
 # TAB 2: IMPORT
