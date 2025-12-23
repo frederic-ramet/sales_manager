@@ -323,7 +323,7 @@ with tab_import:
     # Source d'import
     import_source = st.radio(
         "Source d'import",
-        ["📄 CSV (FullEnrich, Salesbot, etc.)", "🟠 HubSpot", "🔍 SIRENE"],
+        ["📄 CSV (FullEnrich, Salesbot, etc.)", "🟠 HubSpot", "🔍 SIRENE", "💼 GetSales"],
         horizontal=True
     )
 
@@ -524,7 +524,7 @@ with tab_import:
             except Exception as e:
                 st.error(f"❌ Erreur: {e}")
 
-    else:
+    elif "SIRENE" in import_source:
         # Import SIRENE - Recherche
         try:
             sirene_mod = load_module('sirene_search', 'sirene_search.py')
@@ -617,6 +617,110 @@ with tab_import:
 
         except Exception as e:
             st.error(f"❌ Erreur SIRENE: {e}")
+
+    else:
+        # Import GetSales
+        api_key = os.environ.get('GETSALES_API_KEY')
+
+        if not api_key:
+            st.warning("⚠️ GETSALES_API_KEY non configurée")
+            st.info("Configurez la variable d'environnement GETSALES_API_KEY")
+        else:
+            try:
+                getsales_import_mod = load_module('getsales_import_v2', 'getsales_import_v2.py')
+                GetSalesImportV2 = getsales_import_mod.GetSalesImportV2
+                gs_importer = GetSalesImportV2(company_manager, contact_manager, interaction_manager, api_key)
+
+                if gs_importer.is_connected():
+                    st.success("✅ Connecté à GetSales")
+
+                    # Stats
+                    stats = gs_importer.get_import_stats()
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Flows GetSales", stats.get('getsales_flows', '?'))
+                    with col2:
+                        st.metric("Déjà importés", stats.get('local_from_getsales', 0))
+                    with col3:
+                        st.metric("Source", "LinkedIn")
+
+                    st.divider()
+
+                    # Options
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        gs_limit = st.number_input("Limite leads", 10, 500, 100, key="gs_limit")
+                    with col2:
+                        fetch_messages = st.checkbox("📨 Récupérer messages LinkedIn", value=True)
+
+                    # Sélection de flow/campagne
+                    try:
+                        flows = gs_importer.fetch_flows()
+                        if flows:
+                            flow_options = ["Toutes les campagnes"] + [
+                                f"{f.get('name', f.get('uuid', 'Unknown'))} ({f.get('uuid', '')[:8]})"
+                                for f in flows
+                            ]
+                            selected_flow = st.selectbox("🎯 Campagne", flow_options)
+
+                            flow_uuid = None
+                            if selected_flow != "Toutes les campagnes":
+                                idx = flow_options.index(selected_flow) - 1
+                                flow_uuid = flows[idx].get('uuid')
+                    except Exception:
+                        flow_uuid = None
+                        st.info("Impossible de charger les campagnes")
+
+                    if st.button("📥 IMPORTER DEPUIS GETSALES", type="primary", use_container_width=True):
+                        with st.spinner("Import GetSales en cours..."):
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+
+                            def update_gs_progress(current, total, entity_type):
+                                progress_bar.progress(current / total if total > 0 else 0)
+                                status_text.text(f"Import {entity_type}: {current}/{total}")
+
+                            report = gs_importer.import_all(
+                                limit=gs_limit,
+                                flow_uuid=flow_uuid if 'flow_uuid' in dir() else None,
+                                fetch_messages=fetch_messages,
+                                progress_callback=update_gs_progress
+                            )
+                            progress_bar.progress(1.0)
+
+                        if report['success']:
+                            st.success("✅ Import GetSales terminé!")
+
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.markdown("**Leads**")
+                                st.write(f"• Récupérés: {report['leads_fetched']}")
+                            if report.get('companies'):
+                                with col2:
+                                    st.markdown("**Entreprises**")
+                                    st.write(f"• Créées: {report['companies']['created']}")
+                                    st.write(f"• Matchées: {report['companies']['matched']}")
+                            if report.get('contacts'):
+                                with col3:
+                                    st.markdown("**Contacts**")
+                                    st.write(f"• Créés: {report['contacts']['created']}")
+                                    st.write(f"• Mis à jour: {report['contacts']['updated']}")
+
+                            if report.get('interactions', {}).get('created', 0) > 0:
+                                st.info(f"💬 {report['interactions']['created']} interactions importées")
+
+                            if report.get('errors'):
+                                with st.expander(f"⚠️ {len(report['errors'])} erreurs"):
+                                    for err in report['errors'][:20]:
+                                        st.write(f"• {err}")
+                        else:
+                            st.error("❌ Erreur import GetSales")
+                            for err in report.get('errors', []):
+                                st.write(f"• {err}")
+                else:
+                    st.error("❌ Erreur connexion GetSales - vérifiez la clé API")
+            except Exception as e:
+                st.error(f"❌ Erreur: {e}")
 
 # =============================================================================
 # TAB 3: CLEAN

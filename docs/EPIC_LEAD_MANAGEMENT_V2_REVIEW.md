@@ -1,6 +1,6 @@
 # Epic Review - Lead Management V2
 
-## Statut Global: 98% Complete
+## Statut Global: 100% Complete
 
 Date: 2024-12-23
 
@@ -85,20 +85,18 @@ Import (CSV/HubSpot/SIRENE) → Clean (Dedup/Normalize/Validate) → Enrich (SIR
 - Enrichissement uniquement sur sélection
 - Mode "Batch automatique" conservé
 
----
-
-## Tâches Restantes
-
-### Import GetSales ❌
-**Description:** Intégrer l'import GetSales existant avec Schema V2
-- Module existant : `modules/getsales/` (getsales_client.py, sync_service.py)
-- Adapter pour utiliser CompanyManagerV2 / ContactManagerV2
-- Importer messages → table `interactions`
-- Conserver getsales_uuid pour tracking
-
-**Fichiers à adapter:** `modules/getsales/sync_service.py`
+### Phase 11: Import GetSales ✅
+- `modules/lead_scraper/getsales_import_v2.py`
+- Import leads depuis GetSales API vers schema V2
+- Import messages LinkedIn → table `interactions`
+- Matching intelligent entreprises (domain, nom fuzzy)
+- Sélection campagne/flow
+- Conservation getsales_uuid pour tracking
+- UI intégrée dans onglet Import
 
 ---
+
+## Tâches Optionnelles
 
 ### Enrichissement LinkedIn ❌
 **Description:** Enrichir les contacts via LinkedIn (scraping ou API)
@@ -120,12 +118,13 @@ Import (CSV/HubSpot/SIRENE) → Clean (Dedup/Normalize/Validate) → Enrich (SIR
 ## Parcours Utilisateur Cible ✅
 
 ```
-1. [Import HubSpot] → Récupère base existante (companies, contacts, engagements) ✅
-2. [Import CSV]     → Ajoute nouveaux leads (FullEnrich, Salesbot) ✅
-3. [Import SIRENE]  → Recherche et import nouvelles cibles ✅
-4. [Clean]          → Déduplique (bulk), normalise, valide (MX check) ✅
-5. [Enrich]         → Enrichit via Pappers/SIRENE (sélection manuelle) ✅
-6. [Sync]           → Pousse vers HubSpot ✅
+1. [Import HubSpot]  → Récupère base existante (companies, contacts, engagements) ✅
+2. [Import CSV]      → Ajoute nouveaux leads (FullEnrich, Salesbot) ✅
+3. [Import SIRENE]   → Recherche et import nouvelles cibles ✅
+4. [Import GetSales] → Leads LinkedIn avec messages ✅
+5. [Clean]           → Déduplique (bulk), normalise, valide (MX check) ✅
+6. [Enrich]          → Enrichit via Pappers/SIRENE (sélection manuelle) ✅
+7. [Sync]            → Pousse vers HubSpot ✅
 ```
 
 ---
@@ -147,9 +146,10 @@ modules/lead_scraper/
   hubspot_import_v2.py     # NEW - Import depuis HubSpot
   enrichment_service.py
   sirene_search.py         # NEW - Recherche SIRENE
+  getsales_import_v2.py    # NEW - Import depuis GetSales
 
 pages/
-  4_📊_Pipeline_Leads.py   # UI complète 5 onglets
+  4_📊_Pipeline_Leads.py   # UI complète 5 onglets (4 sources import)
 
 scripts/
   migrate_to_v2.py
@@ -159,9 +159,14 @@ scripts/
 
 ## Prochaine Action
 
-Le pipeline Lead Management V2 est fonctionnel à 98%.
+**Le pipeline Lead Management V2 est complet à 100%.**
+
+Toutes les fonctionnalités principales sont implémentées:
+- 4 sources d'import (CSV, HubSpot, SIRENE, GetSales)
+- Nettoyage avec bulk deduplication et MX check
+- Enrichissement avec sélection manuelle
+- Sync vers HubSpot
 
 Tâches optionnelles restantes:
-1. **Import GetSales** - Intégrer avec le pipeline V2
-2. **Sync Bidirectionnel** - Rapatrier les modifications HubSpot
-3. **Enrichissement LinkedIn** - À évaluer (légal)
+1. **Sync Bidirectionnel** - Rapatrier les modifications HubSpot
+2. **Enrichissement LinkedIn** - À évaluer (légal)
