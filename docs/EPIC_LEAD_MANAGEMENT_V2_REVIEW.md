@@ -91,6 +91,17 @@ Import → Clean → Enrich → Sync (one-way)
 
 ---
 
+### Enrichment UI - Sélection manuelle ❌
+**Description:** Permettre sélection manuelle des entreprises à enrichir
+- Recherche/filtre pour trouver les entreprises
+- Checkbox pour sélection multiple (ou "Tout sélectionner")
+- Choix de la source : SIRENE (défaut, gratuit), Pappers (payant, plus complet)
+- Enrichissement sur sélection uniquement
+
+**Fichier:** `pages/4_📊_Pipeline_Leads.py` (onglet Enrich)
+
+---
+
 ### Import SIRENE ❌
 **Description:** Rechercher et importer des entreprises depuis la base SIRENE
 - Recherche par nom, secteur, localisation
