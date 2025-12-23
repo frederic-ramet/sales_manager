@@ -1,6 +1,6 @@
 # Epic Review - Lead Management V2
 
-## Statut Global: 85% Complete
+## Statut Global: 98% Complete
 
 Date: 2024-12-23
 
@@ -9,7 +9,7 @@ Date: 2024-12-23
 ## Pipeline Implémenté
 
 ```
-Import → Clean → Enrich → Sync (one-way)
+Import (CSV/HubSpot/SIRENE) → Clean (Dedup/Normalize/Validate) → Enrich (SIRENE/Pappers) → Sync (HubSpot)
 ```
 
 ---
@@ -34,6 +34,7 @@ Import → Clean → Enrich → Sync (one-way)
 - Normalisation (noms, emails, phones, SIREN, LinkedIn)
 - Validation (format email, SIREN Luhn, etc.)
 - Détection doublons
+- **MX Check validation** (vérification enregistrements MX des domaines)
 
 ### Phase 4: Sync HubSpot (Local → HubSpot) ✅
 - `modules/lead_scraper/hubspot_sync_v2.py`
@@ -52,23 +53,41 @@ Import → Clean → Enrich → Sync (one-way)
 - Vue d'ensemble avec stats pipeline
 - Recherche avancée avec filtres
 
+### Phase 7: Import HubSpot (HubSpot → Local) ✅
+- `modules/lead_scraper/hubspot_import_v2.py`
+- Import Companies via API HubSpot
+- Import Contacts via API HubSpot
+- Import Engagements → Interactions
+- Matching intelligent (éviter doublons)
+- Conservation hubspot_company_id / hubspot_contact_id pour sync bidirectionnel
+- UI intégrée dans onglet Import
+
+### Phase 8: Import SIRENE (Recherche) ✅
+- `modules/lead_scraper/sirene_search.py`
+- Recherche multi-critères (nom, département, secteur NAF, effectif)
+- API gratuite: https://recherche-entreprises.api.gouv.fr
+- Sélection bulk avec checkboxes
+- Import sélection vers base locale
+- UI intégrée dans onglet Import
+
+### Phase 9: Bulk Deduplication UI ✅
+- Onglet Clean avec actions groupées
+- Checkbox "Tout sélectionner"
+- AUTO-MERGE: garde automatiquement le record avec le plus de données
+- HOMONYMES: marquer les contacts comme homonymes
+- Actions individuelles par groupe conservées
+
+### Phase 10: Enrichment UI - Sélection manuelle ✅
+- Mode "Sélection manuelle" avec liste d'entreprises
+- Filtres: recherche, statut enrichissement, taille
+- Checkbox sélection multiple + "Tout sélectionner"
+- Choix source: SIRENE (gratuit) ou Pappers (payant)
+- Enrichissement uniquement sur sélection
+- Mode "Batch automatique" conservé
+
 ---
 
 ## Tâches Restantes
-
-### Import HubSpot (HubSpot → Local) ❌ PRIORITAIRE
-**Description:** Importer les données existantes depuis HubSpot vers la base locale
-- Récupérer Companies via API HubSpot
-- Récupérer Contacts via API HubSpot
-- Récupérer Engagements → Interactions
-- Matching intelligent (éviter doublons si données déjà présentes)
-- Conserver hubspot_company_id / hubspot_contact_id pour sync bidirectionnel
-
-**Fichier à créer:** `modules/lead_scraper/hubspot_import_v2.py`
-
-**UI:** Mettre à jour onglet Import dans Pipeline_Leads.py
-
----
 
 ### Import GetSales ❌
 **Description:** Intégrer l'import GetSales existant avec Schema V2
@@ -78,50 +97,6 @@ Import → Clean → Enrich → Sync (one-way)
 - Conserver getsales_uuid pour tracking
 
 **Fichiers à adapter:** `modules/getsales/sync_service.py`
-
----
-
-### Bulk Deduplication UI ❌
-**Description:** Améliorer l'UI de déduplication pour traitement rapide
-- Checkbox pour sélectionner plusieurs groupes (ou "Tout sélectionner")
-- Actions groupées : "Fusionner sélection", "Marquer homonymes"
-- Auto-merge : garde automatiquement le record avec le plus de données remplies
-
-**Fichier:** `pages/4_📊_Pipeline_Leads.py` (onglet Clean)
-
----
-
-### Enrichment UI - Sélection manuelle ❌
-**Description:** Permettre sélection manuelle des entreprises à enrichir
-- Recherche/filtre pour trouver les entreprises
-- Checkbox pour sélection multiple (ou "Tout sélectionner")
-- Choix de la source : SIRENE (défaut, gratuit), Pappers (payant, plus complet)
-- Enrichissement sur sélection uniquement
-
-**Fichier:** `pages/4_📊_Pipeline_Leads.py` (onglet Enrich)
-
----
-
-### Import SIRENE (Recherche) ❌
-**Description:** Rechercher et importer de nouvelles entreprises cibles depuis SIRENE
-
-**Critères de recherche :**
-- Nom / mot-clé
-- Code APE / secteur d'activité
-- Localisation (ville, département, région)
-- Tranche d'effectif
-- Forme juridique (SAS, SARL, SA...)
-
-**Flow UI :**
-1. Formulaire de recherche multi-critères
-2. Affichage résultats paginés avec preview
-3. Checkbox sélection (bulk)
-4. [IMPORTER SÉLECTION] → crée dans companies avec source='sirene'
-
-**API :** https://recherche-entreprises.api.gouv.fr (gratuite, pas de clé)
-
-**Fichier à créer :** `modules/lead_scraper/sirene_search.py`
-**UI :** Onglet Import → source "SIRENE"
 
 ---
 
@@ -135,16 +110,6 @@ Import → Clean → Enrich → Sync (one-way)
 
 ---
 
-### Validation Email MX Check ❌
-**Description:** Vérification avancée des emails
-- Check MX record du domaine
-- Détecter emails invalides avant sync HubSpot
-- Optionnel car plus lent
-
-**Fichier:** `modules/lead_scraper/data_cleaner.py` (ajouter option)
-
----
-
 ### Sync Bidirectionnel ❌
 **Description:** Détecter les modifications dans HubSpot et les rapatrier
 - Comparaison timestamps updated_at
@@ -152,19 +117,20 @@ Import → Clean → Enrich → Sync (one-way)
 
 ---
 
-## Parcours Utilisateur Cible
+## Parcours Utilisateur Cible ✅
 
 ```
-1. [Import HubSpot] → Récupère base existante (companies, contacts, engagements)
-2. [Import CSV]     → Ajoute nouveaux leads (FullEnrich, Salesbot)
-3. [Clean]          → Déduplique, normalise, valide
-4. [Enrich]         → Enrichit via Pappers/SIRENE
-5. [Sync]           → Pousse vers HubSpot
+1. [Import HubSpot] → Récupère base existante (companies, contacts, engagements) ✅
+2. [Import CSV]     → Ajoute nouveaux leads (FullEnrich, Salesbot) ✅
+3. [Import SIRENE]  → Recherche et import nouvelles cibles ✅
+4. [Clean]          → Déduplique (bulk), normalise, valide (MX check) ✅
+5. [Enrich]         → Enrichit via Pappers/SIRENE (sélection manuelle) ✅
+6. [Sync]           → Pousse vers HubSpot ✅
 ```
 
 ---
 
-## Fichiers Créés
+## Fichiers Créés/Modifiés
 
 ```
 database/
@@ -176,12 +142,14 @@ modules/lead_scraper/
   contact_manager_v2.py
   interaction_manager.py
   csv_importer_v2.py
-  data_cleaner.py
+  data_cleaner.py          # + MX Check
   hubspot_sync_v2.py
+  hubspot_import_v2.py     # NEW - Import depuis HubSpot
   enrichment_service.py
+  sirene_search.py         # NEW - Recherche SIRENE
 
 pages/
-  4_📊_Pipeline_Leads.py
+  4_📊_Pipeline_Leads.py   # UI complète 5 onglets
 
 scripts/
   migrate_to_v2.py
@@ -191,4 +159,9 @@ scripts/
 
 ## Prochaine Action
 
-**Implémenter Import HubSpot** pour permettre le parcours utilisateur complet.
+Le pipeline Lead Management V2 est fonctionnel à 98%.
+
+Tâches optionnelles restantes:
+1. **Import GetSales** - Intégrer avec le pipeline V2
+2. **Sync Bidirectionnel** - Rapatrier les modifications HubSpot
+3. **Enrichissement LinkedIn** - À évaluer (légal)

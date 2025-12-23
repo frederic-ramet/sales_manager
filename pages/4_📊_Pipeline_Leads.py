@@ -653,10 +653,93 @@ with tab_clean:
                     limit=dedup_limit
                 )
 
-        if duplicates:
-            st.warning(f"⚠️ {len(duplicates)} groupes de doublons détectés")
+            st.session_state['duplicates'] = duplicates
+            st.session_state['dedup_type'] = dedup_type
 
-            for i, group in enumerate(duplicates[:10]):
+    # Afficher les résultats si disponibles
+    if 'duplicates' in st.session_state and st.session_state['duplicates']:
+        duplicates = st.session_state['duplicates']
+        dedup_type = st.session_state.get('dedup_type', 'Entreprises')
+
+        st.warning(f"⚠️ {len(duplicates)} groupes de doublons détectés")
+
+        # Bulk actions
+        st.markdown("**Actions groupées**")
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+
+        with col1:
+            select_all = st.checkbox("☑️ Tout sélectionner", key="select_all_dedup")
+
+        with col2:
+            if st.button("🔀 AUTO-MERGE SÉLECTION", type="secondary"):
+                selected_groups = [i for i in range(len(duplicates)) if st.session_state.get(f"dedup_select_{i}", select_all)]
+                if selected_groups:
+                    merged = 0
+                    for idx in selected_groups:
+                        group = duplicates[idx]
+                        items = group.get('companies', group.get('contacts', []))
+                        if len(items) < 2:
+                            continue
+
+                        # Auto-select master: celui avec le plus de données remplies
+                        def count_filled(item):
+                            return sum(1 for v in item.values() if v)
+
+                        items_sorted = sorted(items, key=count_filled, reverse=True)
+                        master = items_sorted[0]
+                        dups = items_sorted[1:]
+
+                        try:
+                            if "Entreprises" in dedup_type:
+                                company_manager.merge(master['uuid'], [d['uuid'] for d in dups])
+                            else:
+                                contact_manager.merge(master['uuid'], [d['uuid'] for d in dups])
+                            merged += 1
+                        except:
+                            pass
+
+                    st.success(f"✅ {merged} groupes fusionnés automatiquement!")
+                    del st.session_state['duplicates']
+                    st.rerun()
+                else:
+                    st.warning("Sélectionnez au moins un groupe")
+
+        with col3:
+            if st.button("👥 HOMONYMES SÉLECTION", type="secondary"):
+                if "Contacts" in dedup_type:
+                    selected_groups = [i for i in range(len(duplicates)) if st.session_state.get(f"dedup_select_{i}", select_all)]
+                    if selected_groups:
+                        marked = 0
+                        for idx in selected_groups:
+                            group = duplicates[idx]
+                            items = group.get('contacts', [])
+                            uuids = [c['uuid'] for c in items]
+                            try:
+                                contact_manager.mark_as_homonyms(uuids)
+                                marked += 1
+                            except:
+                                pass
+                        st.success(f"✅ {marked} groupes marqués homonymes!")
+                        del st.session_state['duplicates']
+                        st.rerun()
+                else:
+                    st.info("Homonymes uniquement pour contacts")
+
+        with col4:
+            if st.button("🗑️ EFFACER RÉSULTATS"):
+                del st.session_state['duplicates']
+                st.rerun()
+
+        st.divider()
+
+        # Afficher les groupes avec checkboxes
+        for i, group in enumerate(duplicates[:20]):
+            col1, col2 = st.columns([0.5, 9.5])
+
+            with col1:
+                st.checkbox("", key=f"dedup_select_{i}", value=select_all)
+
+            with col2:
                 with st.expander(f"Groupe {i+1} - Score: {group['score']}% - {group['reason']}"):
                     if "Entreprises" in dedup_type:
                         items = group['companies']
@@ -665,27 +748,19 @@ with tab_clean:
                             'SIREN': c.get('siren'),
                             'Domain': c.get('domain'),
                             'Contacts': c.get('contact_count', 0)
-                        } for c in items])
+                        } for c in items], hide_index=True)
 
-                        # Sélection du master
                         master_options = [f"{c.get('name')} ({c.get('uuid')[:8]})" for c in items]
-                        master_choice = st.selectbox(
-                            "Master (à conserver)",
-                            master_options,
-                            key=f"master_company_{i}"
-                        )
+                        master_choice = st.selectbox("Master", master_options, key=f"master_company_{i}")
 
-                        if st.button(f"🔀 Fusionner le groupe {i+1}", key=f"merge_company_{i}"):
+                        if st.button(f"🔀 Fusionner", key=f"merge_company_{i}"):
                             master_idx = master_options.index(master_choice)
                             master_uuid = items[master_idx]['uuid']
                             dup_uuids = [c['uuid'] for c in items if c['uuid'] != master_uuid]
-
                             result = company_manager.merge(master_uuid, dup_uuids)
                             if result['success']:
-                                st.success(f"✅ Fusion réussie! {result['contacts_moved']} contacts transférés")
+                                st.success(f"✅ Fusion réussie!")
                                 st.rerun()
-                            else:
-                                st.error(f"❌ Erreur: {result['errors']}")
                     else:
                         items = group['contacts']
                         st.dataframe([{
@@ -693,37 +768,30 @@ with tab_clean:
                             'Email': c.get('email'),
                             'LinkedIn': c.get('linkedin_url'),
                             'Entreprise': c.get('company_name')
-                        } for c in items])
+                        } for c in items], hide_index=True)
 
-                        master_options = [
-                            f"{c.get('firstname', '')} {c.get('lastname', '')} ({c.get('uuid')[:8]})"
-                            for c in items
-                        ]
-                        master_choice = st.selectbox(
-                            "Master",
-                            master_options,
-                            key=f"master_contact_{i}"
-                        )
+                        master_options = [f"{c.get('firstname', '')} {c.get('lastname', '')} ({c.get('uuid')[:8]})" for c in items]
+                        master_choice = st.selectbox("Master", master_options, key=f"master_contact_{i}")
 
-                        col1, col2 = st.columns(2)
-                        with col1:
+                        bcol1, bcol2 = st.columns(2)
+                        with bcol1:
                             if st.button(f"🔀 Fusionner", key=f"merge_contact_{i}"):
                                 master_idx = master_options.index(master_choice)
                                 master_uuid = items[master_idx]['uuid']
                                 dup_uuids = [c['uuid'] for c in items if c['uuid'] != master_uuid]
-
                                 result = contact_manager.merge(master_uuid, dup_uuids)
                                 if result['success']:
                                     st.success("✅ Fusion réussie!")
                                     st.rerun()
-                        with col2:
+                        with bcol2:
                             if st.button(f"👥 Homonymes", key=f"homonym_{i}"):
                                 uuids = [c['uuid'] for c in items]
                                 contact_manager.mark_as_homonyms(uuids)
-                                st.success("✅ Marqués comme homonymes")
+                                st.success("✅ Homonymes!")
                                 st.rerun()
-        else:
-            st.success("✅ Aucun doublon détecté!")
+
+    elif 'duplicates' in st.session_state:
+        st.success("✅ Aucun doublon détecté!")
 
     st.divider()
 
@@ -857,88 +925,271 @@ with tab_enrich:
 
     st.divider()
 
+    # Mode d'enrichissement
+    enrich_mode = st.radio(
+        "Mode",
+        ["📋 Sélection manuelle", "🔄 Batch automatique"],
+        horizontal=True
+    )
+
     # Source d'enrichissement
     enrich_source = st.radio(
         "Source d'enrichissement",
-        ["📊 Pappers (SIREN → dirigeants, CA, effectifs)", "🔍 SIRENE (SIREN → adresse, APE)"],
+        ["🔍 SIRENE (gratuit - adresse, APE)", "📊 Pappers (payant - dirigeants, CA, effectifs)"],
         horizontal=True
     )
 
     source = 'pappers' if 'Pappers' in enrich_source else 'sirene'
 
-    # Filtres
-    col1, col2, col3 = st.columns(3)
+    st.divider()
 
-    with col1:
-        only_unenriched = st.checkbox("Non enrichies uniquement", value=True)
+    if "Sélection manuelle" in enrich_mode:
+        # Mode sélection manuelle avec checkboxes
+        st.markdown("### 📋 Sélection des entreprises à enrichir")
 
-    with col2:
-        size_filter = st.selectbox("Taille", ["Toutes", "1-10", "11-50", "51-200", "201-500", "501+"])
+        # Filtres de recherche
+        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
 
-    with col3:
-        enrich_limit = st.number_input("Limite", 10, 500, 100)
+        with col1:
+            enrich_search = st.text_input("🔍 Recherche", placeholder="Nom, SIREN...", key="enrich_search")
 
-    # Aperçu des entreprises à enrichir
-    with st.expander("👁 Aperçu des entreprises à enrichir"):
-        preview_companies = enricher._get_companies_to_enrich(min(enrich_limit, 20), only_unenriched)
-        if preview_companies:
-            st.dataframe([{
-                'Nom': c.get('name'),
-                'SIREN': c.get('siren'),
-                'Taille': c.get('size'),
-                'Enrichi': '✅' if c.get('enriched_at') else '❌'
-            } for c in preview_companies], use_container_width=True)
-        else:
-            st.info("Aucune entreprise à enrichir (vérifiez les filtres)")
+        with col2:
+            enrich_filter_status = st.selectbox(
+                "Statut",
+                ["Non enrichies", "Toutes", "Enrichies"],
+                key="enrich_status"
+            )
 
-    # Bouton enrichissement
-    if st.button("🔍 ENRICHIR", type="primary", use_container_width=True):
-        if source == 'pappers' and not pappers_key:
-            st.error("❌ PAPPERS_API_KEY requise pour Pappers")
-        else:
-            with st.spinner(f"Enrichissement via {source.upper()} en cours..."):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+        with col3:
+            enrich_size_filter = st.selectbox(
+                "Taille",
+                ["Toutes", "1-10", "11-50", "51-200", "201-500", "501+"],
+                key="enrich_size"
+            )
 
-                def update_progress(current, total):
-                    progress_bar.progress(current / total if total > 0 else 0)
-                    status_text.text(f"Traitement: {current}/{total}")
+        with col4:
+            enrich_display_limit = st.selectbox("Afficher", [25, 50, 100], key="enrich_display")
 
-                report = enricher.enrich_batch(
-                    source=source,
-                    limit=enrich_limit,
-                    only_unenriched=only_unenriched,
-                    progress_callback=update_progress
-                )
+        # Charger les entreprises avec filtres
+        if st.button("🔍 CHARGER", key="load_enrich_companies"):
+            # Récupérer les entreprises
+            only_unenriched = enrich_filter_status == "Non enrichies"
+            only_enriched = enrich_filter_status == "Enrichies"
 
-                progress_bar.progress(1.0)
+            companies = company_manager.list_all(status='active', limit=enrich_display_limit * 2)
 
-            # Résultats
-            if report['success']:
-                st.success("✅ Enrichissement terminé!")
+            # Filtrer par statut enrichissement
+            if only_unenriched:
+                companies = [c for c in companies if not c.get('enriched_at')]
+            elif only_enriched:
+                companies = [c for c in companies if c.get('enriched_at')]
 
-                col1, col2, col3 = st.columns(3)
+            # Filtrer par recherche
+            if enrich_search:
+                search_lower = enrich_search.lower()
+                companies = [c for c in companies if
+                    (c.get('name') and search_lower in c['name'].lower()) or
+                    (c.get('siren') and search_lower in c['siren'])
+                ]
+
+            # Filtrer par taille
+            if enrich_size_filter != "Toutes":
+                companies = [c for c in companies if c.get('size') == enrich_size_filter]
+
+            # Limiter
+            companies = companies[:enrich_display_limit]
+
+            st.session_state['enrich_companies'] = companies
+            st.session_state['enrich_selected'] = set()
+
+        # Afficher les entreprises avec checkboxes
+        if 'enrich_companies' in st.session_state and st.session_state['enrich_companies']:
+            companies = st.session_state['enrich_companies']
+
+            st.write(f"**{len(companies)}** entreprises affichées")
+
+            # Actions groupées
+            col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+
+            with col1:
+                select_all_enrich = st.checkbox("☑️ Tout sélectionner", key="select_all_enrich")
+                if select_all_enrich:
+                    st.session_state['enrich_selected'] = set(range(len(companies)))
+
+            with col2:
+                selected_count = len(st.session_state.get('enrich_selected', set()))
+                st.write(f"**{selected_count}** sélectionnées")
+
+            with col3:
+                if st.button("🗑️ Effacer sélection"):
+                    st.session_state['enrich_selected'] = set()
+                    st.rerun()
+
+            with col4:
+                if st.button(f"🔍 ENRICHIR SÉLECTION ({selected_count})", type="primary", disabled=selected_count == 0):
+                    if source == 'pappers' and not pappers_key:
+                        st.error("❌ PAPPERS_API_KEY requise pour Pappers")
+                    else:
+                        # Récupérer les entreprises sélectionnées
+                        selected_companies = [companies[i] for i in st.session_state['enrich_selected']]
+
+                        with st.spinner(f"Enrichissement via {source.upper()} en cours..."):
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+
+                            enriched = 0
+                            errors = []
+                            contacts_added = 0
+
+                            for i, company in enumerate(selected_companies):
+                                progress_bar.progress((i + 1) / len(selected_companies))
+                                status_text.text(f"Traitement: {company.get('name', 'N/A')} ({i+1}/{len(selected_companies)})")
+
+                                siren = company.get('siren')
+                                if not siren:
+                                    errors.append(f"{company.get('name', 'N/A')}: pas de SIREN")
+                                    continue
+
+                                try:
+                                    result = enricher.enrich_company(company['uuid'], source=source)
+                                    if result.get('success'):
+                                        enriched += 1
+                                        contacts_added += result.get('contacts_added', 0)
+                                    else:
+                                        errors.append(f"{company.get('name', 'N/A')}: {result.get('error', 'erreur')}")
+                                except Exception as e:
+                                    errors.append(f"{company.get('name', 'N/A')}: {str(e)}")
+
+                            progress_bar.progress(1.0)
+
+                        st.success(f"✅ Enrichissement terminé! {enriched}/{len(selected_companies)} entreprises enrichies")
+
+                        if contacts_added > 0:
+                            st.info(f"👤 {contacts_added} contacts ajoutés")
+
+                        if errors:
+                            with st.expander(f"⚠️ {len(errors)} erreurs"):
+                                for err in errors[:20]:
+                                    st.write(f"• {err}")
+
+                        # Nettoyer la session
+                        del st.session_state['enrich_companies']
+                        del st.session_state['enrich_selected']
+                        st.rerun()
+
+            st.divider()
+
+            # Liste des entreprises avec checkboxes
+            for i, company in enumerate(companies):
+                col1, col2, col3, col4, col5 = st.columns([0.5, 3, 2, 2, 1])
 
                 with col1:
-                    st.metric("Traitées", report['total_processed'])
+                    checked = i in st.session_state.get('enrich_selected', set())
+                    if st.checkbox("", key=f"enrich_company_{i}", value=checked or select_all_enrich):
+                        if 'enrich_selected' not in st.session_state:
+                            st.session_state['enrich_selected'] = set()
+                        st.session_state['enrich_selected'].add(i)
+                    elif i in st.session_state.get('enrich_selected', set()):
+                        st.session_state['enrich_selected'].discard(i)
 
                 with col2:
-                    st.metric("Enrichies", report['enriched'])
+                    st.write(f"**{company.get('name', 'N/A')}**")
 
                 with col3:
-                    st.metric("Contacts ajoutés", report['contacts_added'])
+                    siren = company.get('siren', '-')
+                    st.write(f"SIREN: {siren}" if siren else "⚠️ Pas de SIREN")
 
-                if report['skipped'] > 0:
-                    st.info(f"ℹ️ {report['skipped']} entreprises ignorées (sans SIREN)")
+                with col4:
+                    st.write(company.get('size', '-'))
 
-                if report['errors']:
-                    with st.expander(f"⚠️ {len(report['errors'])} erreurs"):
-                        for err in report['errors'][:20]:
-                            st.write(f"• {err}")
+                with col5:
+                    if company.get('enriched_at'):
+                        st.write("✅")
+                    else:
+                        st.write("❌")
+
+        elif 'enrich_companies' in st.session_state:
+            st.info("Aucune entreprise ne correspond aux filtres")
+        else:
+            st.info("Cliquez sur 'CHARGER' pour afficher les entreprises")
+
+    else:
+        # Mode batch automatique (ancien mode)
+        st.markdown("### 🔄 Enrichissement batch")
+
+        # Filtres
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            only_unenriched = st.checkbox("Non enrichies uniquement", value=True)
+
+        with col2:
+            size_filter = st.selectbox("Taille", ["Toutes", "1-10", "11-50", "51-200", "201-500", "501+"])
+
+        with col3:
+            enrich_limit = st.number_input("Limite", 10, 500, 100)
+
+        # Aperçu des entreprises à enrichir
+        with st.expander("👁 Aperçu des entreprises à enrichir"):
+            preview_companies = enricher._get_companies_to_enrich(min(enrich_limit, 20), only_unenriched)
+            if preview_companies:
+                st.dataframe([{
+                    'Nom': c.get('name'),
+                    'SIREN': c.get('siren'),
+                    'Taille': c.get('size'),
+                    'Enrichi': '✅' if c.get('enriched_at') else '❌'
+                } for c in preview_companies], use_container_width=True)
             else:
-                st.error("❌ Erreur d'enrichissement")
-                for err in report.get('errors', []):
-                    st.write(f"• {err}")
+                st.info("Aucune entreprise à enrichir (vérifiez les filtres)")
+
+        # Bouton enrichissement
+        if st.button("🔍 ENRICHIR", type="primary", use_container_width=True):
+            if source == 'pappers' and not pappers_key:
+                st.error("❌ PAPPERS_API_KEY requise pour Pappers")
+            else:
+                with st.spinner(f"Enrichissement via {source.upper()} en cours..."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+
+                    def update_progress(current, total):
+                        progress_bar.progress(current / total if total > 0 else 0)
+                        status_text.text(f"Traitement: {current}/{total}")
+
+                    report = enricher.enrich_batch(
+                        source=source,
+                        limit=enrich_limit,
+                        only_unenriched=only_unenriched,
+                        progress_callback=update_progress
+                    )
+
+                    progress_bar.progress(1.0)
+
+                # Résultats
+                if report['success']:
+                    st.success("✅ Enrichissement terminé!")
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric("Traitées", report['total_processed'])
+
+                    with col2:
+                        st.metric("Enrichies", report['enriched'])
+
+                    with col3:
+                        st.metric("Contacts ajoutés", report['contacts_added'])
+
+                    if report['skipped'] > 0:
+                        st.info(f"ℹ️ {report['skipped']} entreprises ignorées (sans SIREN)")
+
+                    if report['errors']:
+                        with st.expander(f"⚠️ {len(report['errors'])} erreurs"):
+                            for err in report['errors'][:20]:
+                                st.write(f"• {err}")
+                else:
+                    st.error("❌ Erreur d'enrichissement")
+                    for err in report.get('errors', []):
+                        st.write(f"• {err}")
 
 # =============================================================================
 # TAB 5: SYNC
