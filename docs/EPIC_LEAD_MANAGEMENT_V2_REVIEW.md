@@ -125,6 +125,26 @@ Import → Clean → Enrich → Sync (one-way)
 
 ---
 
+### Enrichissement LinkedIn ❌
+**Description:** Enrichir les contacts via LinkedIn (scraping ou API)
+- Récupérer infos profil LinkedIn (headline, experience, skills)
+- Mettre à jour job_title, seniority, department
+- Attention: respect des ToS LinkedIn
+
+**Note:** Complexe légalement, à évaluer priorité
+
+---
+
+### Validation Email MX Check ❌
+**Description:** Vérification avancée des emails
+- Check MX record du domaine
+- Détecter emails invalides avant sync HubSpot
+- Optionnel car plus lent
+
+**Fichier:** `modules/lead_scraper/data_cleaner.py` (ajouter option)
+
+---
+
 ### Sync Bidirectionnel ❌
 **Description:** Détecter les modifications dans HubSpot et les rapatrier
 - Comparaison timestamps updated_at
