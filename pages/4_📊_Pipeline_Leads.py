@@ -442,12 +442,181 @@ with tab_import:
                 pass
 
     elif "HubSpot" in import_source:
-        st.info("🟠 Import depuis HubSpot - À venir")
-        st.write("Cette fonctionnalité permettra d'importer les contacts et entreprises depuis HubSpot.")
+        # Import HubSpot
+        api_key = os.environ.get('HUBSPOT_API_KEY')
+
+        if not api_key:
+            st.warning("⚠️ HUBSPOT_API_KEY non configurée")
+            st.info("Configurez la variable d'environnement HUBSPOT_API_KEY")
+        else:
+            # Charger le module d'import
+            try:
+                hubspot_import_mod = load_module('hubspot_import_v2', 'hubspot_import_v2.py')
+                HubSpotImportV2 = hubspot_import_mod.HubSpotImportV2
+                hs_importer = HubSpotImportV2(company_manager, contact_manager, interaction_manager, api_key)
+
+                if hs_importer.is_connected():
+                    st.success("✅ Connecté à HubSpot")
+
+                    # Stats
+                    stats = hs_importer.get_import_stats()
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Companies HubSpot", stats.get('hubspot_companies', '?'))
+                    with col2:
+                        st.metric("Contacts HubSpot", stats.get('hubspot_contacts', '?'))
+                    with col3:
+                        st.metric("Déjà importées", stats.get('local_from_hubspot', 0))
+
+                    st.divider()
+
+                    # Options
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        import_companies = st.checkbox("🏢 Entreprises", value=True)
+                    with col2:
+                        import_contacts = st.checkbox("👤 Contacts", value=True)
+                    with col3:
+                        import_engagements = st.checkbox("💬 Engagements", value=True)
+
+                    hs_limit = st.number_input("Limite par type", 10, 1000, 100)
+
+                    if st.button("📥 IMPORTER DEPUIS HUBSPOT", type="primary", use_container_width=True):
+                        with st.spinner("Import HubSpot en cours..."):
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+
+                            def update_hs_progress(current, total, entity_type):
+                                progress_bar.progress(current / total if total > 0 else 0)
+                                status_text.text(f"Import {entity_type}: {current}/{total}")
+
+                            report = hs_importer.import_all(
+                                companies=import_companies,
+                                contacts=import_contacts,
+                                engagements=import_engagements,
+                                limit=hs_limit,
+                                progress_callback=update_hs_progress
+                            )
+                            progress_bar.progress(1.0)
+
+                        if report['success']:
+                            st.success("✅ Import HubSpot terminé!")
+
+                            col1, col2, col3 = st.columns(3)
+                            if report.get('companies'):
+                                with col1:
+                                    st.markdown("**Entreprises**")
+                                    st.write(f"• Créées: {report['companies']['created']}")
+                                    st.write(f"• Matchées: {report['companies']['matched']}")
+                            if report.get('contacts'):
+                                with col2:
+                                    st.markdown("**Contacts**")
+                                    st.write(f"• Créés: {report['contacts']['created']}")
+                                    st.write(f"• Matchés: {report['contacts']['matched']}")
+                            if report.get('engagements'):
+                                with col3:
+                                    st.markdown("**Interactions**")
+                                    st.write(f"• Créées: {report['engagements']['created']}")
+                        else:
+                            st.error("❌ Erreur import HubSpot")
+                else:
+                    st.error("❌ Erreur connexion HubSpot - vérifiez la clé API")
+            except Exception as e:
+                st.error(f"❌ Erreur: {e}")
 
     else:
-        st.info("🔍 Import depuis SIRENE - À venir")
-        st.write("Cette fonctionnalité permettra de rechercher et importer des entreprises depuis la base SIRENE.")
+        # Import SIRENE - Recherche
+        try:
+            sirene_mod = load_module('sirene_search', 'sirene_search.py')
+            SireneSearch = sirene_mod.SireneSearch
+            sirene = SireneSearch(company_manager)
+
+            st.markdown("### Recherche d'entreprises SIRENE")
+
+            # Formulaire de recherche
+            col1, col2 = st.columns(2)
+
+            with col1:
+                sirene_query = st.text_input("🔍 Recherche", placeholder="Nom, SIREN, mot-clé...")
+                sirene_dept = st.text_input("📍 Département", placeholder="69, 75...")
+
+            with col2:
+                # Sections NAF
+                naf_sections = sirene.get_naf_sections()
+                naf_options = ["Tous"] + [f"{k} - {v}" for k, v in naf_sections.items()]
+                sirene_naf = st.selectbox("🏭 Secteur NAF", naf_options)
+
+                # Tranches effectif
+                effectif_tranches = sirene.get_effectif_tranches()
+                eff_options = ["Toutes"] + [f"{k} - {v}" for k, v in effectif_tranches.items()]
+                sirene_effectif = st.selectbox("👥 Effectif", eff_options)
+
+            if st.button("🔍 RECHERCHER", type="primary"):
+                with st.spinner("Recherche SIRENE en cours..."):
+                    # Préparer les paramètres
+                    search_params = {'per_page': 25}
+                    if sirene_query:
+                        search_params['query'] = sirene_query
+                    if sirene_dept:
+                        search_params['departement'] = sirene_dept
+                    if sirene_naf != "Tous":
+                        search_params['section_naf'] = sirene_naf.split(" - ")[0]
+                    if sirene_effectif != "Toutes":
+                        search_params['tranche_effectif'] = sirene_effectif.split(" - ")[0]
+
+                    results = sirene.search(**search_params)
+
+                if results.get('error'):
+                    st.error(f"Erreur: {results['error']}")
+                elif results['total'] == 0:
+                    st.info("Aucun résultat trouvé")
+                else:
+                    st.success(f"✅ {results['total']} résultats trouvés")
+
+                    # Stocker les résultats dans session state
+                    st.session_state['sirene_results'] = results['results']
+
+                    # Afficher les résultats avec checkboxes
+                    st.markdown("### Résultats")
+
+                    selected = []
+                    for i, company in enumerate(results['results']):
+                        col1, col2, col3, col4 = st.columns([0.5, 3, 2, 2])
+                        with col1:
+                            if st.checkbox("", key=f"sirene_{i}"):
+                                selected.append(i)
+                        with col2:
+                            st.write(f"**{company.get('name', 'N/A')}**")
+                        with col3:
+                            st.write(company.get('hq_city', ''))
+                        with col4:
+                            st.write(company.get('size_label', ''))
+
+                    st.session_state['sirene_selected'] = selected
+
+            # Bouton import si résultats
+            if 'sirene_results' in st.session_state and st.session_state.get('sirene_selected'):
+                selected_count = len(st.session_state['sirene_selected'])
+                if st.button(f"📥 IMPORTER {selected_count} ENTREPRISE(S)", type="primary"):
+                    selected_companies = [
+                        st.session_state['sirene_results'][i]
+                        for i in st.session_state['sirene_selected']
+                    ]
+
+                    with st.spinner("Import en cours..."):
+                        report = sirene.import_companies(selected_companies)
+
+                    if report.get('errors'):
+                        st.warning(f"Import partiel: {report['created']} créées, {len(report['errors'])} erreurs")
+                    else:
+                        st.success(f"✅ {report['created']} entreprises importées!")
+
+                    # Nettoyer session
+                    del st.session_state['sirene_results']
+                    del st.session_state['sirene_selected']
+
+        except Exception as e:
+            st.error(f"❌ Erreur SIRENE: {e}")
 
 # =============================================================================
 # TAB 3: CLEAN
@@ -587,30 +756,62 @@ with tab_clean:
     # Section Validation
     st.markdown("### ✅ Validation")
 
-    if st.button("✅ VALIDER LES DONNÉES"):
-        with st.spinner("Validation en cours..."):
-            validation = cleaner.validate_all()
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ VALIDER LES DONNÉES"):
+            with st.spinner("Validation en cours..."):
+                validation = cleaner.validate_all()
 
-        st.markdown("**Résumé**")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Emails invalides", validation['summary']['invalid_emails'])
-        with col2:
-            st.metric("Téléphones invalides", validation['summary']['invalid_phones'])
-        with col3:
-            st.metric("SIREN invalides", validation['summary']['invalid_sirens'])
-        with col4:
-            st.metric("LinkedIn invalides", validation['summary']['invalid_linkedin'])
+            st.markdown("**Résumé**")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Emails invalides", validation['summary']['invalid_emails'])
+            with col2:
+                st.metric("Téléphones invalides", validation['summary']['invalid_phones'])
+            with col3:
+                st.metric("SIREN invalides", validation['summary']['invalid_sirens'])
+            with col4:
+                st.metric("LinkedIn invalides", validation['summary']['invalid_linkedin'])
 
-        if validation['companies']['issues']:
-            with st.expander(f"⚠️ {len(validation['companies']['issues'])} entreprises avec problèmes"):
-                for issue in validation['companies']['issues'][:20]:
-                    st.write(f"• **{issue['name']}**: {', '.join(issue['issues'])}")
+            if validation['companies']['issues']:
+                with st.expander(f"⚠️ {len(validation['companies']['issues'])} entreprises avec problèmes"):
+                    for issue in validation['companies']['issues'][:20]:
+                        st.write(f"• **{issue['name']}**: {', '.join(issue['issues'])}")
 
-        if validation['contacts']['issues']:
-            with st.expander(f"⚠️ {len(validation['contacts']['issues'])} contacts avec problèmes"):
-                for issue in validation['contacts']['issues'][:20]:
-                    st.write(f"• **{issue['name']}**: {', '.join(issue['issues'])}")
+            if validation['contacts']['issues']:
+                with st.expander(f"⚠️ {len(validation['contacts']['issues'])} contacts avec problèmes"):
+                    for issue in validation['contacts']['issues'][:20]:
+                        st.write(f"• **{issue['name']}**: {', '.join(issue['issues'])}")
+
+    with col2:
+        st.markdown("**MX Check (emails)**")
+        mx_limit = st.number_input("Limite contacts", 10, 500, 100, key="mx_limit")
+        if st.button("📧 VÉRIFIER MX"):
+            with st.spinner("Vérification MX en cours..."):
+                progress_bar = st.progress(0)
+
+                def mx_progress(current, total):
+                    progress_bar.progress(current / total if total > 0 else 0)
+
+                mx_report = cleaner.validate_emails_with_mx(
+                    limit=mx_limit,
+                    progress_callback=mx_progress
+                )
+                progress_bar.progress(1.0)
+
+            st.write(f"**Vérifiés:** {mx_report['checked']}")
+            st.write(f"**Valides:** {mx_report['valid']}")
+
+            if mx_report['invalid']:
+                with st.expander(f"⚠️ {len(mx_report['invalid'])} emails invalides"):
+                    for inv in mx_report['invalid'][:20]:
+                        reason = "Format" if inv['reason'] == 'format_invalid' else f"MX ({inv.get('domain', '')})"
+                        st.write(f"• {inv['email']} - {reason}")
+
+            if mx_report.get('domains_checked'):
+                invalid_domains = [d for d, valid in mx_report['domains_checked'].items() if not valid]
+                if invalid_domains:
+                    st.warning(f"Domaines sans MX: {', '.join(invalid_domains[:10])}")
 
 # =============================================================================
 # TAB 4: ENRICH

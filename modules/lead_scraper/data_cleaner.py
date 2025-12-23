@@ -547,11 +547,139 @@ class DataCleaner:
     # FONCTIONS DE VALIDATION
     # =========================================================================
 
-    def validate_email(self, email: str) -> bool:
-        """Valide un email."""
+    def validate_email(self, email: str, check_mx: bool = False) -> bool:
+        """
+        Valide un email.
+
+        Args:
+            email: Adresse email à valider
+            check_mx: Si True, vérifie aussi les records MX du domaine
+
+        Returns:
+            True si valide
+        """
         if not email:
             return False
-        return bool(self.email_pattern.match(email.lower().strip()))
+
+        email = email.lower().strip()
+
+        # Validation format
+        if not self.email_pattern.match(email):
+            return False
+
+        # Validation MX optionnelle
+        if check_mx:
+            domain = email.split('@')[1]
+            if not self.check_mx_record(domain):
+                return False
+
+        return True
+
+    def check_mx_record(self, domain: str) -> bool:
+        """
+        Vérifie les records MX d'un domaine.
+
+        Args:
+            domain: Domaine à vérifier
+
+        Returns:
+            True si le domaine a des records MX valides
+        """
+        try:
+            import dns.resolver
+            DNS_AVAILABLE = True
+        except ImportError:
+            DNS_AVAILABLE = False
+
+        if not DNS_AVAILABLE:
+            logger.debug("dnspython non installé, MX check ignoré")
+            return True  # Skip si pas de dns module
+
+        try:
+            mx_records = dns.resolver.resolve(domain, 'MX')
+            return len(mx_records) > 0
+        except dns.resolver.NXDOMAIN:
+            logger.debug(f"Domaine inexistant: {domain}")
+            return False
+        except dns.resolver.NoAnswer:
+            logger.debug(f"Pas de MX record: {domain}")
+            return False
+        except dns.resolver.Timeout:
+            logger.debug(f"Timeout MX check: {domain}")
+            return True  # Timeout = on ne bloque pas
+        except Exception as e:
+            logger.debug(f"Erreur MX check {domain}: {e}")
+            return True  # Erreur = on ne bloque pas
+
+    def validate_emails_with_mx(
+        self,
+        limit: int = 100,
+        progress_callback=None
+    ) -> Dict[str, Any]:
+        """
+        Valide les emails des contacts avec vérification MX.
+
+        Args:
+            limit: Nombre max de contacts à vérifier
+            progress_callback: Callback(current, total)
+
+        Returns:
+            Rapport de validation
+        """
+        report = {
+            'checked': 0,
+            'valid': 0,
+            'invalid': [],
+            'domains_checked': {},
+            'errors': []
+        }
+
+        if not self.contact_manager:
+            report['errors'].append('ContactManager non initialisé')
+            return report
+
+        contacts = self.contact_manager.list_all(limit=limit)
+
+        # Cache des domaines déjà vérifiés
+        domain_cache = {}
+
+        for i, contact in enumerate(contacts):
+            if progress_callback:
+                progress_callback(i + 1, len(contacts))
+
+            email = contact.get('email')
+            if not email:
+                continue
+
+            report['checked'] += 1
+
+            # Valider format d'abord
+            if not self.email_pattern.match(email.lower().strip()):
+                report['invalid'].append({
+                    'uuid': contact['uuid'],
+                    'email': email,
+                    'reason': 'format_invalid'
+                })
+                continue
+
+            # Vérifier MX (avec cache)
+            domain = email.split('@')[1].lower()
+
+            if domain not in domain_cache:
+                domain_cache[domain] = self.check_mx_record(domain)
+                report['domains_checked'][domain] = domain_cache[domain]
+
+            if not domain_cache[domain]:
+                report['invalid'].append({
+                    'uuid': contact['uuid'],
+                    'email': email,
+                    'reason': 'mx_invalid',
+                    'domain': domain
+                })
+            else:
+                report['valid'] += 1
+
+        return report
 
     def validate_phone(self, phone: str) -> bool:
         """Valide un numéro de téléphone."""
