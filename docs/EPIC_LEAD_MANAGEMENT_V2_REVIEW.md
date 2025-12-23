@@ -70,6 +70,17 @@ Import → Clean → Enrich → Sync (one-way)
 
 ---
 
+### Import GetSales ❌
+**Description:** Intégrer l'import GetSales existant avec Schema V2
+- Module existant : `modules/getsales/` (getsales_client.py, sync_service.py)
+- Adapter pour utiliser CompanyManagerV2 / ContactManagerV2
+- Importer messages → table `interactions`
+- Conserver getsales_uuid pour tracking
+
+**Fichiers à adapter:** `modules/getsales/sync_service.py`
+
+---
+
 ### Bulk Deduplication UI ❌
 **Description:** Améliorer l'UI de déduplication pour traitement rapide
 - Checkbox pour sélectionner plusieurs groupes (ou "Tout sélectionner")
