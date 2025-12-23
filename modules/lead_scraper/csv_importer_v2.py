@@ -186,6 +186,7 @@ DEFAULT_CSV_MAPPING = {
     'Direct Dial': 'contacts.phone',
     'Work Phone': 'contacts.phone',
     'Téléphone': 'contacts.phone',
+    'Numéro de téléphone': 'contacts.phone',
 
     'Mobile': 'contacts.mobile',
     'mobile': 'contacts.mobile',
@@ -345,10 +346,14 @@ class CSVImporterV2:
 
             with open(file_path, 'r', encoding=encoding, errors='replace') as f:
                 reader = csv.DictReader(f, delimiter=delimiter)
-                result['columns'] = reader.fieldnames or []
+                # Nettoyer BOM et espaces des noms de colonnes
+                raw_columns = reader.fieldnames or []
+                result['columns'] = [col.strip().lstrip('\ufeff') for col in raw_columns]
 
                 # Lire quelques lignes pour l'aperçu
-                for i, row in enumerate(reader):
+                for i, raw_row in enumerate(reader):
+                    # Nettoyer BOM des clés dans les données
+                    row = {k.strip().lstrip('\ufeff'): v for k, v in raw_row.items()}
                     if i < 5:
                         result['sample_data'].append(row)
                     result['row_count'] += 1
@@ -433,7 +438,9 @@ class CSVImporterV2:
             with open(file_path, 'r', encoding=encoding, errors='replace') as f:
                 reader = csv.DictReader(f, delimiter=delimiter)
 
-                for row_num, row in enumerate(reader, start=2):  # Start at 2 (header = 1)
+                for row_num, raw_row in enumerate(reader, start=2):  # Start at 2 (header = 1)
+                    # Nettoyer BOM et espaces des clés
+                    row = {k.strip().lstrip('\ufeff'): v for k, v in raw_row.items()}
                     try:
                         if progress_callback:
                             progress_callback(row_num - 1, total_rows)
