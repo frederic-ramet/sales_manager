@@ -102,10 +102,26 @@ Import → Clean → Enrich → Sync (one-way)
 
 ---
 
-### Import SIRENE ❌
-**Description:** Rechercher et importer des entreprises depuis la base SIRENE
-- Recherche par nom, secteur, localisation
-- Import direct dans companies
+### Import SIRENE (Recherche) ❌
+**Description:** Rechercher et importer de nouvelles entreprises cibles depuis SIRENE
+
+**Critères de recherche :**
+- Nom / mot-clé
+- Code APE / secteur d'activité
+- Localisation (ville, département, région)
+- Tranche d'effectif
+- Forme juridique (SAS, SARL, SA...)
+
+**Flow UI :**
+1. Formulaire de recherche multi-critères
+2. Affichage résultats paginés avec preview
+3. Checkbox sélection (bulk)
+4. [IMPORTER SÉLECTION] → crée dans companies avec source='sirene'
+
+**API :** https://recherche-entreprises.api.gouv.fr (gratuite, pas de clé)
+
+**Fichier à créer :** `modules/lead_scraper/sirene_search.py`
+**UI :** Onglet Import → source "SIRENE"
 
 ---
 
