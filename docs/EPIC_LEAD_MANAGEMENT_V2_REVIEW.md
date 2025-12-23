@@ -70,6 +70,16 @@ Import → Clean → Enrich → Sync (one-way)
 
 ---
 
+### Bulk Deduplication UI ❌
+**Description:** Améliorer l'UI de déduplication pour traitement rapide
+- Checkbox pour sélectionner plusieurs groupes (ou "Tout sélectionner")
+- Actions groupées : "Fusionner sélection", "Marquer homonymes"
+- Auto-merge : garde automatiquement le record avec le plus de données remplies
+
+**Fichier:** `pages/4_📊_Pipeline_Leads.py` (onglet Clean)
+
+---
+
 ### Import SIRENE ❌
 **Description:** Rechercher et importer des entreprises depuis la base SIRENE
 - Recherche par nom, secteur, localisation
