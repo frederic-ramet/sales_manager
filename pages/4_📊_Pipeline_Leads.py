@@ -34,6 +34,7 @@ try:
     csv_importer_mod = load_module('csv_importer_v2', 'csv_importer_v2.py')
     data_cleaner_mod = load_module('data_cleaner', 'data_cleaner.py')
     hubspot_sync_mod = load_module('hubspot_sync_v2', 'hubspot_sync_v2.py')
+    enrichment_mod = load_module('enrichment_service', 'enrichment_service.py')
 
     CompanyManagerV2 = company_mod.CompanyManagerV2
     ContactManagerV2 = contact_mod.ContactManagerV2
@@ -41,6 +42,7 @@ try:
     CSVImporterV2 = csv_importer_mod.CSVImporterV2
     DataCleaner = data_cleaner_mod.DataCleaner
     HubSpotSyncV2 = hubspot_sync_mod.HubSpotSyncV2
+    EnrichmentService = enrichment_mod.EnrichmentService
 
     MODULES_AVAILABLE = True
 except Exception as e:
@@ -506,21 +508,41 @@ with tab_clean:
 with tab_enrich:
     st.subheader("🔍 Enrichissement des données")
 
+    # Initialiser le service d'enrichissement
+    enricher = EnrichmentService(company_manager, contact_manager)
+    enrich_stats = enricher.get_enrichment_stats()
+
     # Stats
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("À enrichir", company_stats.get('to_enrich', 0))
+        st.metric("À enrichir", enrich_stats.get('to_enrich', 0))
 
     with col2:
-        enriched = company_stats.get('total', 0) - company_stats.get('to_enrich', 0)
-        st.metric("Enrichies", enriched)
+        st.metric("Enrichies", enrich_stats.get('enriched', 0))
 
     with col3:
-        # Compter celles sans SIREN
-        companies = company_manager.list_all(limit=10000)
-        no_siren = sum(1 for c in companies if not c.get('siren'))
+        no_siren = enrich_stats.get('total_companies', 0) - enrich_stats.get('with_siren', 0)
         st.metric("Sans SIREN", no_siren)
+
+    # Stats par source
+    if enrich_stats.get('by_source'):
+        st.caption(f"Par source: {enrich_stats['by_source']}")
+
+    st.divider()
+
+    # Vérifier les clés API
+    pappers_key = os.environ.get('PAPPERS_API_KEY')
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if pappers_key:
+            st.success("✅ Pappers API configurée")
+        else:
+            st.warning("⚠️ PAPPERS_API_KEY non configurée")
+
+    with col2:
+        st.success("✅ SIRENE API (gratuite)")
 
     st.divider()
 
@@ -530,6 +552,8 @@ with tab_enrich:
         ["📊 Pappers (SIREN → dirigeants, CA, effectifs)", "🔍 SIRENE (SIREN → adresse, APE)"],
         horizontal=True
     )
+
+    source = 'pappers' if 'Pappers' in enrich_source else 'sirene'
 
     # Filtres
     col1, col2, col3 = st.columns(3)
@@ -543,9 +567,67 @@ with tab_enrich:
     with col3:
         enrich_limit = st.number_input("Limite", 10, 500, 100)
 
+    # Aperçu des entreprises à enrichir
+    with st.expander("👁 Aperçu des entreprises à enrichir"):
+        preview_companies = enricher._get_companies_to_enrich(min(enrich_limit, 20), only_unenriched)
+        if preview_companies:
+            st.dataframe([{
+                'Nom': c.get('name'),
+                'SIREN': c.get('siren'),
+                'Taille': c.get('size'),
+                'Enrichi': '✅' if c.get('enriched_at') else '❌'
+            } for c in preview_companies], use_container_width=True)
+        else:
+            st.info("Aucune entreprise à enrichir (vérifiez les filtres)")
+
+    # Bouton enrichissement
     if st.button("🔍 ENRICHIR", type="primary", use_container_width=True):
-        st.info("⚠️ Enrichissement Pappers/SIRENE - Intégration à venir")
-        st.write("Cette fonctionnalité appellera les APIs Pappers ou SIRENE pour enrichir les entreprises avec SIREN.")
+        if source == 'pappers' and not pappers_key:
+            st.error("❌ PAPPERS_API_KEY requise pour Pappers")
+        else:
+            with st.spinner(f"Enrichissement via {source.upper()} en cours..."):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                def update_progress(current, total):
+                    progress_bar.progress(current / total if total > 0 else 0)
+                    status_text.text(f"Traitement: {current}/{total}")
+
+                report = enricher.enrich_batch(
+                    source=source,
+                    limit=enrich_limit,
+                    only_unenriched=only_unenriched,
+                    progress_callback=update_progress
+                )
+
+                progress_bar.progress(1.0)
+
+            # Résultats
+            if report['success']:
+                st.success("✅ Enrichissement terminé!")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric("Traitées", report['total_processed'])
+
+                with col2:
+                    st.metric("Enrichies", report['enriched'])
+
+                with col3:
+                    st.metric("Contacts ajoutés", report['contacts_added'])
+
+                if report['skipped'] > 0:
+                    st.info(f"ℹ️ {report['skipped']} entreprises ignorées (sans SIREN)")
+
+                if report['errors']:
+                    with st.expander(f"⚠️ {len(report['errors'])} erreurs"):
+                        for err in report['errors'][:20]:
+                            st.write(f"• {err}")
+            else:
+                st.error("❌ Erreur d'enrichissement")
+                for err in report.get('errors', []):
+                    st.write(f"• {err}")
 
 # =============================================================================
 # TAB 5: SYNC
