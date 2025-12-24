@@ -25,7 +25,19 @@
 
 | # | Remarque | Priorité | Statut |
 |---|----------|----------|--------|
-| 1 | | | |
+| 1 | Ajouter plus de champs de recherche/filtres | Moyenne | Open |
+| 2 | Créer une vue Fiche Entreprise (infos entreprise + contacts liés) | Haute | Open |
+
+**Détail remarque #1 :**
+- Actuellement : recherche par nom, SIREN, email, domain
+- Manque : filtres par taille, ville, secteur, tier, enrichi/non enrichi, etc.
+
+**Détail remarque #2 : Vue Fiche Entreprise**
+- Clic sur une entreprise → ouvre une fiche détaillée
+- Section 1 : Toutes les infos entreprise (~30 champs)
+- Section 2 : Liste des contacts liés à cette entreprise
+- Section 3 : Historique des engagements (tous contacts confondus)
+- Actions : Modifier, Enrichir, Changer Tier, Sync HubSpot
 
 ### Clean (Déduplication)
 
