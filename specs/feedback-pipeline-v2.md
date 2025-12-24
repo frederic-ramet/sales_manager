@@ -56,7 +56,14 @@
 
 | # | Remarque | Priorité | Statut |
 |---|----------|----------|--------|
-| 1 | | | |
+| 1 | Compteur sélection décalé de 1 (affiche 1 au lieu de 2 cochées) | Haute | Open |
+| 2 | Bouton "Enrichir sélection" : 1er clic = rien, 2ème clic = reload page | **Critique** | Open |
+| 3 | Mode batch : "Aucune entreprise à enrichir" alors qu'il y en a en manuel | Haute | Open |
+
+**Détail bugs Enrich :**
+- Bug #1 : Le compteur de sélection est décalé de -1
+- Bug #2 : Le bouton d'enrichissement ne déclenche pas l'action, comportement incohérent
+- Bug #3 : Le filtre batch automatique ne trouve pas les mêmes entreprises que le mode sélection manuelle
 
 ### Sync HubSpot
 
