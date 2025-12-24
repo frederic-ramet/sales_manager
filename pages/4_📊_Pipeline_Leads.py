@@ -397,10 +397,10 @@ with tab_vue:
             key="company_detail_search"
         )
     with col2:
-        if st.button("🔍 Afficher fiche", key="show_company_detail"):
-            st.session_state['show_company_detail'] = True
+        if st.button("🔍 Afficher fiche", key="btn_show_company_detail"):
+            st.session_state['display_company_fiche'] = True
 
-    if st.session_state.get('show_company_detail') and company_detail_search:
+    if st.session_state.get('display_company_fiche') and company_detail_search:
         # Chercher l'entreprise
         found_company = None
 
