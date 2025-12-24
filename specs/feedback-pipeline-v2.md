@@ -74,5 +74,45 @@
 
 | # | Suggestion | Impact |
 |---|------------|--------|
-| 1 | | |
+| 1 | Ajouter statut Contact → Lead → Transaction | Haute |
+
+**Détail suggestion #1 : Workflow de qualification**
+
+### Niveau 1 – Contact
+- Quelqu'un identifié avec info de contact valide
+- **Aucune interaction commerciale active**
+- Pas de qualification, pas de scoring
+- **Statut** : `contact`
+
+### Niveau 2 – Lead
+Créé après un **premier contact réel** :
+- Réponse à un message
+- Échange LinkedIn / email
+- Call rapide
+- Intérêt exprimé (même léger)
+
+**Objectif** : Comprendre besoin, vérifier timing, vérifier capacité à avancer
+- **Statut** : `lead`
+
+### Niveau 3 – Transaction (Deal)
+Créé quand :
+- Besoin clair
+- Scope minimum défini
+- Probabilité de vente existe
+
+**Règles** :
+- Toute transaction créée dans HubSpot (pipeline) ET Asana (actions)
+- Objectif : amener à une vente (call → proposition → décision)
+- **Statut** : `transaction`
+
+### Règles de passage
+
+| Transition | Question à se poser |
+|------------|---------------------|
+| Contact → Lead | Est-ce qu'on a eu un vrai échange ? |
+| Lead → Transaction | Est-ce qu'il y a un besoin réel + une chance de vendre ? |
+
+⚠️ Si réponse = NON → on ne passe pas l'étape
+
+**Action technique** : Ajouter champ `qualification_status` dans table `contacts` avec valeurs : `contact`, `lead`, `transaction`
 
