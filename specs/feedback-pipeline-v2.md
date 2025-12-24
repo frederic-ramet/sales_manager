@@ -13,6 +13,13 @@
 | # | Remarque | Priorité | Statut |
 |---|----------|----------|--------|
 | 1 | Import crée entreprises + contacts mais PAS les interactions/événements | Moyenne | Open |
+| 2 | Permettre de tagger l'origine/source lors de l'import | Haute | Open |
+
+**Détail remarque #2 :**
+- À l'import, pouvoir spécifier un tag d'origine (ex: "Salon VivaTech 2024", "LinkedIn Ads", "Referral Partner X")
+- Différent du champ `source` technique (csv, hubspot, getsales)
+- Permet de tracker la provenance business des données
+- **Action technique** : Ajouter champ `source_tag` ou `origin` dans companies/contacts + input dans UI import
 
 **Détail remarque #1 :**
 - Les entreprises sont créées ✅
