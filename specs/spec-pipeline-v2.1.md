@@ -363,14 +363,16 @@ Options de sync séparées:
 
 ## Critères d'acceptation
 
-- [ ] Tier classifiable manuellement sur entreprises
-- [ ] Qualification Contact/Lead/Transaction fonctionnelle
-- [ ] Import CSV avec mapping manuel restauré
-- [ ] Tag source sur tous les imports
-- [ ] Bugs enrichissement corrigés
-- [ ] Bug source "manual" corrigé
-- [ ] Quality gate avec warnings avant sync
-- [ ] Sync granulaire (entreprises/contacts/engagements séparés)
-- [ ] Vue Fiche Entreprise complète
-- [ ] Filtres avancés opérationnels
-- [ ] Owner assignable sur entreprises
+- [x] Tier classifiable manuellement sur entreprises
+- [x] Qualification Contact/Lead/Transaction fonctionnelle
+- [x] Import CSV avec mapping manuel restauré
+- [x] Tag source sur tous les imports
+- [x] Bugs enrichissement corrigés
+- [x] Bug source "manual" corrigé
+- [x] Quality gate avec warnings avant sync
+- [x] Sync granulaire (entreprises/contacts/engagements séparés)
+- [x] Vue Fiche Entreprise complète
+- [x] Filtres avancés opérationnels
+- [x] Owner assignable sur entreprises
+
+**Implémenté le**: 2024-12-24
