@@ -4,7 +4,7 @@ HubSpot Import V2 - Import depuis HubSpot vers base locale.
 Pipeline: HubSpot → Local (companies, contacts, interactions)
 
 Usage:
-    importer = HubSpotImportV2(company_manager, contact_manager, interaction_manager, api_key)
+    importer = HubSpotImportV2(company_manager, contact_manager, engagement_manager, api_key)
 
     # Import complet
     report = importer.import_all()
@@ -48,12 +48,12 @@ class HubSpotImportV2:
         self,
         company_manager=None,
         contact_manager=None,
-        interaction_manager=None,
+        engagement_manager=None,
         api_key: str = None
     ):
         self.company_manager = company_manager
         self.contact_manager = contact_manager
-        self.interaction_manager = interaction_manager
+        self.engagement_manager = engagement_manager
         self.api_key = api_key or os.environ.get('HUBSPOT_API_KEY')
         self._client = None
 
@@ -258,11 +258,10 @@ class HubSpotImportV2:
                 return 'matched'
 
         # Créer nouvelle company
-        company_data['source'] = 'hubspot'
         company_data['synced_to_hubspot'] = 1
         company_data['last_sync_hubspot'] = datetime.now()
 
-        self.company_manager.create(company_data)
+        self.company_manager.create(company_data, source='hubspot')
         return 'created'
 
     def _map_employee_count(self, count: str) -> str:
@@ -442,12 +441,11 @@ class HubSpotImportV2:
                 return 'matched'
 
         # Créer nouveau contact
-        contact_data['source'] = 'hubspot'
         contact_data['company_uuid'] = company_uuid
         contact_data['synced_to_hubspot'] = 1
         contact_data['last_sync_hubspot'] = datetime.now()
 
-        self.contact_manager.create(contact_data)
+        self.contact_manager.create(contact_data, source='hubspot')
         return 'created'
 
     # =========================================================================
@@ -473,9 +471,9 @@ class HubSpotImportV2:
             'by_type': {}
         }
 
-        if not self.interaction_manager:
+        if not self.engagement_manager:
             report['success'] = False
-            report['errors'].append('InteractionManager non initialisé')
+            report['errors'].append('EngagementManager non initialisé')
             return report
 
         engagement_types = ['emails', 'calls', 'meetings', 'notes']
@@ -552,7 +550,7 @@ class HubSpotImportV2:
         props = engagement.get('properties', {})
 
         # Vérifier si déjà importé
-        existing = self.interaction_manager.find_by_hubspot_id(hs_id)
+        existing = self.engagement_manager.find_by_hubspot_id(hs_id)
         if existing:
             return False
 
@@ -597,7 +595,7 @@ class HubSpotImportV2:
         elif eng_type == 'notes':
             interaction_data['content'] = props.get('hs_note_body')
 
-        self.interaction_manager.create(interaction_data)
+        self.engagement_manager.create(interaction_data, source='hubspot')
         return True
 
     def _find_contact_for_engagement(self, engagement_id: str, eng_type: str) -> Optional[str]:

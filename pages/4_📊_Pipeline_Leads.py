@@ -30,7 +30,7 @@ try:
 
     company_mod = load_module('company_manager_v2', 'company_manager_v2.py')
     contact_mod = load_module('contact_manager_v2', 'contact_manager_v2.py')
-    interaction_mod = load_module('interaction_manager', 'interaction_manager.py')
+    engagement_mod = load_module('engagement_manager', 'engagement_manager.py')
     csv_importer_mod = load_module('csv_importer_v2', 'csv_importer_v2.py')
     data_cleaner_mod = load_module('data_cleaner', 'data_cleaner.py')
     hubspot_sync_mod = load_module('hubspot_sync_v2', 'hubspot_sync_v2.py')
@@ -38,7 +38,7 @@ try:
 
     CompanyManagerV2 = company_mod.CompanyManagerV2
     ContactManagerV2 = contact_mod.ContactManagerV2
-    InteractionManager = interaction_mod.InteractionManager
+    EngagementManager = engagement_mod.EngagementManager
     CSVImporterV2 = csv_importer_mod.CSVImporterV2
     DataCleaner = data_cleaner_mod.DataCleaner
     HubSpotSyncV2 = hubspot_sync_mod.HubSpotSyncV2
@@ -66,15 +66,15 @@ if not MODULES_AVAILABLE:
 def get_managers():
     company_mgr = CompanyManagerV2()
     contact_mgr = ContactManagerV2()
-    interaction_mgr = InteractionManager()
-    return company_mgr, contact_mgr, interaction_mgr
+    engagement_mgr = EngagementManager()
+    return company_mgr, contact_mgr, engagement_mgr
 
-company_manager, contact_manager, interaction_manager = get_managers()
+company_manager, contact_manager, engagement_manager = get_managers()
 
 # Stats globales
 company_stats = company_manager.get_stats()
 contact_stats = contact_manager.get_stats()
-interaction_stats = interaction_manager.get_stats()
+engagement_stats = engagement_manager.get_stats()
 
 # Onglets principaux
 tab_vue, tab_import, tab_clean, tab_enrich, tab_sync = st.tabs([
@@ -103,8 +103,8 @@ with tab_vue:
         st.metric("👤 Contacts", total_contacts)
 
     with col3:
-        total_interactions = interaction_stats.get('total', 0)
-        st.metric("💬 Interactions", total_interactions)
+        total_interactions = engagement_stats.get('total', 0)
+        st.metric("💬 Engagements", total_interactions)
 
     with col4:
         synced = total_companies - company_stats.get('to_sync', 0)
@@ -453,7 +453,7 @@ with tab_import:
             try:
                 hubspot_import_mod = load_module('hubspot_import_v2', 'hubspot_import_v2.py')
                 HubSpotImportV2 = hubspot_import_mod.HubSpotImportV2
-                hs_importer = HubSpotImportV2(company_manager, contact_manager, interaction_manager, api_key)
+                hs_importer = HubSpotImportV2(company_manager, contact_manager, engagement_manager, api_key)
 
                 if hs_importer.is_connected():
                     st.success("✅ Connecté à HubSpot")
@@ -515,7 +515,7 @@ with tab_import:
                                     st.write(f"• Matchés: {report['contacts']['matched']}")
                             if report.get('engagements'):
                                 with col3:
-                                    st.markdown("**Interactions**")
+                                    st.markdown("**Engagements**")
                                     st.write(f"• Créées: {report['engagements']['created']}")
                         else:
                             st.error("❌ Erreur import HubSpot")
@@ -629,7 +629,7 @@ with tab_import:
             try:
                 getsales_import_mod = load_module('getsales_import_v2', 'getsales_import_v2.py')
                 GetSalesImportV2 = getsales_import_mod.GetSalesImportV2
-                gs_importer = GetSalesImportV2(company_manager, contact_manager, interaction_manager, api_key)
+                gs_importer = GetSalesImportV2(company_manager, contact_manager, engagement_manager, api_key)
 
                 if gs_importer.is_connected():
                     st.success("✅ Connecté à GetSales")
@@ -706,8 +706,8 @@ with tab_import:
                                     st.write(f"• Créés: {report['contacts']['created']}")
                                     st.write(f"• Mis à jour: {report['contacts']['updated']}")
 
-                            if report.get('interactions', {}).get('created', 0) > 0:
-                                st.info(f"💬 {report['interactions']['created']} interactions importées")
+                            if report.get('engagements', {}).get('created', 0) > 0:
+                                st.info(f"💬 {report['engagements']['created']} interactions importées")
 
                             if report.get('errors'):
                                 with st.expander(f"⚠️ {len(report['errors'])} erreurs"):

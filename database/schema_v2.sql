@@ -74,9 +74,14 @@ CREATE TABLE IF NOT EXISTS companies (
     synced_to_hubspot INTEGER DEFAULT 0,
     last_sync_hubspot TIMESTAMP,
 
+    -- V2.1: Classification & Attribution
+    tier TEXT DEFAULT 'unclassified',    -- 'tier_1', 'tier_2', 'tier_3', 'excluded', 'unclassified'
+    owner TEXT,                          -- Email/nom de l'apporteur d'affaires
+    source_tag TEXT,                     -- Tag business provenance (ex: "Salon VivaTech 2024")
+
     -- Statistiques (calculées)
     total_contacts INTEGER DEFAULT 0,
-    total_interactions INTEGER DEFAULT 0
+    total_engagements INTEGER DEFAULT 0
 );
 
 -- Index companies
@@ -87,6 +92,8 @@ CREATE INDEX IF NOT EXISTS idx_companies_hubspot ON companies(hubspot_company_id
 CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(status);
 CREATE INDEX IF NOT EXISTS idx_companies_source ON companies(source);
 CREATE INDEX IF NOT EXISTS idx_companies_created ON companies(created_at);
+CREATE INDEX IF NOT EXISTS idx_companies_tier ON companies(tier);
+CREATE INDEX IF NOT EXISTS idx_companies_owner ON companies(owner);
 
 
 -- ============================================================================
@@ -157,9 +164,13 @@ CREATE TABLE IF NOT EXISTS contacts (
     synced_to_hubspot INTEGER DEFAULT 0,
     last_sync_hubspot TIMESTAMP,
 
+    -- V2.1: Qualification & Attribution
+    qualification_status TEXT DEFAULT 'contact',  -- 'contact', 'lead', 'transaction'
+    source_tag TEXT,                              -- Tag business provenance
+
     -- Statistiques (calculées)
-    total_interactions INTEGER DEFAULT 0,
-    last_interaction_at TIMESTAMP,
+    total_engagements INTEGER DEFAULT 0,
+    last_engagement_at TIMESTAMP,
 
     -- Notes
     notes TEXT,
@@ -178,14 +189,15 @@ CREATE INDEX IF NOT EXISTS idx_contacts_getsales ON contacts(getsales_uuid);
 CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
 CREATE INDEX IF NOT EXISTS idx_contacts_source ON contacts(source);
 CREATE INDEX IF NOT EXISTS idx_contacts_created ON contacts(created_at);
+CREATE INDEX IF NOT EXISTS idx_contacts_qualification ON contacts(qualification_status);
 
 
 -- ============================================================================
--- TABLE: INTERACTIONS
+-- TABLE: ENGAGEMENTS
 -- ============================================================================
--- Historique des interactions avec les contacts (GetSales, HubSpot, manuel)
+-- Historique des engagements avec les contacts (GetSales, HubSpot, manuel)
 
-CREATE TABLE IF NOT EXISTS interactions (
+CREATE TABLE IF NOT EXISTS engagements (
     -- Identifiants
     uuid TEXT PRIMARY KEY,
     contact_uuid TEXT NOT NULL,          -- FK vers contacts
@@ -223,13 +235,13 @@ CREATE TABLE IF NOT EXISTS interactions (
     FOREIGN KEY (contact_uuid) REFERENCES contacts(uuid) ON DELETE CASCADE
 );
 
--- Index interactions
-CREATE INDEX IF NOT EXISTS idx_interactions_contact ON interactions(contact_uuid);
-CREATE INDEX IF NOT EXISTS idx_interactions_date ON interactions(interaction_date);
-CREATE INDEX IF NOT EXISTS idx_interactions_type ON interactions(type);
-CREATE INDEX IF NOT EXISTS idx_interactions_campaign ON interactions(campaign_id);
-CREATE INDEX IF NOT EXISTS idx_interactions_hubspot ON interactions(hubspot_engagement_id);
-CREATE INDEX IF NOT EXISTS idx_interactions_getsales ON interactions(getsales_message_id);
+-- Index engagements
+CREATE INDEX IF NOT EXISTS idx_engagements_contact ON engagements(contact_uuid);
+CREATE INDEX IF NOT EXISTS idx_engagements_date ON engagements(interaction_date);
+CREATE INDEX IF NOT EXISTS idx_engagements_type ON engagements(type);
+CREATE INDEX IF NOT EXISTS idx_engagements_campaign ON engagements(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_engagements_hubspot ON engagements(hubspot_engagement_id);
+CREATE INDEX IF NOT EXISTS idx_engagements_getsales ON engagements(getsales_message_id);
 
 
 -- ============================================================================
@@ -313,7 +325,7 @@ SELECT
     -- Totaux
     (SELECT COUNT(*) FROM companies WHERE status = 'active') as total_companies,
     (SELECT COUNT(*) FROM contacts WHERE status = 'active') as total_contacts,
-    (SELECT COUNT(*) FROM interactions) as total_interactions,
+    (SELECT COUNT(*) FROM engagements) as total_engagements,
 
     -- Par source
     (SELECT COUNT(*) FROM companies WHERE source = 'csv' AND status = 'active') as companies_from_csv,

@@ -4,7 +4,7 @@ Import GetSales vers Schema V2.
 Adapte l'import GetSales pour utiliser:
 - CompanyManagerV2 (companies)
 - ContactManagerV2 (contacts)
-- InteractionManager (interactions)
+- EngagementManager (interactions)
 """
 import os
 import logging
@@ -34,7 +34,7 @@ class GetSalesImportV2:
         self,
         company_manager,
         contact_manager,
-        interaction_manager,
+        engagement_manager,
         api_key: Optional[str] = None
     ):
         """
@@ -43,12 +43,12 @@ class GetSalesImportV2:
         Args:
             company_manager: CompanyManagerV2
             contact_manager: ContactManagerV2
-            interaction_manager: InteractionManager
+            engagement_manager: EngagementManager
             api_key: Clé API GetSales (ou GETSALES_API_KEY)
         """
         self.company_manager = company_manager
         self.contact_manager = contact_manager
-        self.interaction_manager = interaction_manager
+        self.engagement_manager = engagement_manager
         self.api_key = api_key or os.environ.get('GETSALES_API_KEY')
         self._getsales_client = None
 
@@ -255,7 +255,7 @@ class GetSalesImportV2:
                 result['contact_matched'] = True
             else:
                 # Création
-                contact_uuid = self.contact_manager.create(contact_data)
+                contact_uuid = self.contact_manager.create(contact_data, source='getsales')
                 result['contact_created'] = True
 
         # 4. Importer les messages/interactions
@@ -338,10 +338,9 @@ class GetSalesImportV2:
             'domain': domain,
             'hq_city': lead.get('company_city'),
             'industry': lead.get('company_industry'),
-            'source': 'getsales',
         }
 
-        company_uuid = self.company_manager.create(company_data)
+        company_uuid = self.company_manager.create(company_data, source='getsales')
         return company_uuid, True
 
     def _build_contact_data(self, lead: Dict[str, Any], company_uuid: Optional[str]) -> Dict[str, Any]:
@@ -488,8 +487,8 @@ class GetSalesImportV2:
             'message_status': message.get('status'),
         }
 
-        # Créer l'interaction
-        interaction_data = {
+        # Créer l'engagement
+        engagement_data = {
             'contact_uuid': contact_uuid,
             'company_uuid': company_uuid,
             'type': interaction_type,
@@ -497,8 +496,7 @@ class GetSalesImportV2:
             'channel': 'linkedin',
             'content': content,
             'interaction_date': interaction_date,
-            'source': 'getsales',
             'metadata': metadata,
         }
 
-        self.interaction_manager.create(interaction_data)
+        self.engagement_manager.create(engagement_data, source='getsales')

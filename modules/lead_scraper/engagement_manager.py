@@ -1,7 +1,7 @@
 """
-InteractionManager - Gestionnaire des interactions (Schema V2).
+EngagementManager - Gestionnaire des engagements (Schema V2).
 
-Gère l'historique des interactions avec les contacts:
+Gère l'historique des engagements avec les contacts:
 - Messages GetSales (LinkedIn)
 - Emails HubSpot
 - Appels téléphoniques
@@ -9,7 +9,7 @@ Gère l'historique des interactions avec les contacts:
 - Notes manuelles
 
 Usage:
-    manager = InteractionManager()
+    manager = EngagementManager()
 
     # Créer une interaction
     uuid = manager.create({
@@ -21,8 +21,8 @@ Usage:
         'interaction_date': datetime.now()
     }, source='getsales')
 
-    # Lister interactions d'un contact
-    interactions = manager.list_by_contact('xxx')
+    # Lister engagements d'un contact
+    engagements = manager.list_by_contact('xxx')
 """
 
 import sqlite3
@@ -37,11 +37,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "data" / "leads.db"
 
 
-class InteractionManager:
+class EngagementManager:
     """
-    Gestionnaire des interactions - Schema V2.
+    Gestionnaire des engagements - Schema V2.
 
-    Types d'interactions:
+    Types d'engagements:
     - message: Messages LinkedIn (GetSales)
     - email: Emails
     - call: Appels téléphoniques
@@ -98,7 +98,7 @@ class InteractionManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO interactions (
+                INSERT INTO engagements (
                     uuid, contact_uuid,
                     hubspot_engagement_id, getsales_message_id,
                     type, direction, channel,
@@ -141,13 +141,13 @@ class InteractionManager:
             # Mettre à jour le compteur du contact
             cursor.execute("""
                 UPDATE contacts SET
-                    total_interactions = total_interactions + 1,
+                    total_engagements = total_engagements + 1,
                     last_interaction_at = ?
                 WHERE uuid = ?
             """, (data.get('interaction_date'), data.get('contact_uuid')))
             conn.commit()
 
-            logger.debug(f"Interaction créée: {data.get('type')} ({interaction_uuid})")
+            logger.debug(f"Engagement créée: {data.get('type')} ({interaction_uuid})")
             return interaction_uuid
 
     def get(self, interaction_uuid: str) -> Optional[Dict[str, Any]]:
@@ -155,7 +155,7 @@ class InteractionManager:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM interactions WHERE uuid = ?", (interaction_uuid,))
+            cursor.execute("SELECT * FROM engagements WHERE uuid = ?", (interaction_uuid,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -182,7 +182,7 @@ class InteractionManager:
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute(f"UPDATE interactions SET {set_clause} WHERE uuid = ?", values)
+            cursor.execute(f"UPDATE engagements SET {set_clause} WHERE uuid = ?", values)
             conn.commit()
             return cursor.rowcount > 0
 
@@ -193,21 +193,21 @@ class InteractionManager:
 
             # D'abord récupérer le contact_uuid pour décrémenter le compteur
             cursor.execute(
-                "SELECT contact_uuid FROM interactions WHERE uuid = ?",
+                "SELECT contact_uuid FROM engagements WHERE uuid = ?",
                 (interaction_uuid,)
             )
             row = cursor.fetchone()
             contact_uuid = row[0] if row else None
 
             # Supprimer l'interaction
-            cursor.execute("DELETE FROM interactions WHERE uuid = ?", (interaction_uuid,))
+            cursor.execute("DELETE FROM engagements WHERE uuid = ?", (interaction_uuid,))
             deleted = cursor.rowcount > 0
 
             # Mettre à jour le compteur du contact
             if deleted and contact_uuid:
                 cursor.execute("""
-                    UPDATE contacts SET total_interactions = total_interactions - 1
-                    WHERE uuid = ? AND total_interactions > 0
+                    UPDATE contacts SET total_engagements = total_engagements - 1
+                    WHERE uuid = ? AND total_engagements > 0
                 """, (contact_uuid,))
 
             conn.commit()
@@ -225,7 +225,7 @@ class InteractionManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM interactions WHERE hubspot_engagement_id = ?",
+                "SELECT * FROM engagements WHERE hubspot_engagement_id = ?",
                 (str(hubspot_engagement_id),)
             )
             row = cursor.fetchone()
@@ -239,7 +239,7 @@ class InteractionManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM interactions WHERE getsales_message_id = ?",
+                "SELECT * FROM engagements WHERE getsales_message_id = ?",
                 (getsales_message_id,)
             )
             row = cursor.fetchone()
@@ -278,7 +278,7 @@ class InteractionManager:
         channel: str = None,
         limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """Liste les interactions d'un contact."""
+        """Liste les engagements d'un contact."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -298,7 +298,7 @@ class InteractionManager:
             params.append(limit)
 
             cursor.execute(f"""
-                SELECT * FROM interactions
+                SELECT * FROM engagements
                 WHERE {where_clause}
                 ORDER BY interaction_date DESC
                 LIMIT ?
@@ -311,13 +311,13 @@ class InteractionManager:
         campaign_id: str,
         limit: int = 1000
     ) -> List[Dict[str, Any]]:
-        """Liste les interactions d'une campagne."""
+        """Liste les engagements d'une campagne."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT i.*, c.firstname, c.lastname, c.email, c.linkedin_url
-                FROM interactions i
+                FROM engagements i
                 LEFT JOIN contacts c ON i.contact_uuid = c.uuid
                 WHERE i.campaign_id = ?
                 ORDER BY i.interaction_date DESC
@@ -331,7 +331,7 @@ class InteractionManager:
         interaction_type: str = None,
         limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """Liste les interactions récentes."""
+        """Liste les engagements récentes."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -348,7 +348,7 @@ class InteractionManager:
 
             cursor.execute(f"""
                 SELECT i.*, c.firstname, c.lastname, c.email, co.name as company_name
-                FROM interactions i
+                FROM engagements i
                 LEFT JOIN contacts c ON i.contact_uuid = c.uuid
                 LEFT JOIN companies co ON c.company_uuid = co.uuid
                 WHERE {where_clause}
@@ -359,22 +359,22 @@ class InteractionManager:
             return [dict(row) for row in cursor.fetchall()]
 
     def count(self, contact_uuid: str = None, campaign_id: str = None) -> int:
-        """Compte les interactions."""
+        """Compte les engagements."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
 
             if contact_uuid:
                 cursor.execute(
-                    "SELECT COUNT(*) FROM interactions WHERE contact_uuid = ?",
+                    "SELECT COUNT(*) FROM engagements WHERE contact_uuid = ?",
                     (contact_uuid,)
                 )
             elif campaign_id:
                 cursor.execute(
-                    "SELECT COUNT(*) FROM interactions WHERE campaign_id = ?",
+                    "SELECT COUNT(*) FROM engagements WHERE campaign_id = ?",
                     (campaign_id,)
                 )
             else:
-                cursor.execute("SELECT COUNT(*) FROM interactions")
+                cursor.execute("SELECT COUNT(*) FROM engagements")
 
             return cursor.fetchone()[0]
 
@@ -383,20 +383,20 @@ class InteractionManager:
     # =========================================================================
 
     def get_stats(self) -> Dict[str, Any]:
-        """Retourne les statistiques des interactions."""
+        """Retourne les statistiques des engagements."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
 
             stats = {}
 
             # Total
-            cursor.execute("SELECT COUNT(*) FROM interactions")
+            cursor.execute("SELECT COUNT(*) FROM engagements")
             stats['total'] = cursor.fetchone()[0]
 
             # Par type
             cursor.execute("""
                 SELECT type, COUNT(*) as count
-                FROM interactions
+                FROM engagements
                 GROUP BY type
             """)
             stats['by_type'] = {row[0]: row[1] for row in cursor.fetchall()}
@@ -404,7 +404,7 @@ class InteractionManager:
             # Par source
             cursor.execute("""
                 SELECT source, COUNT(*) as count
-                FROM interactions
+                FROM engagements
                 GROUP BY source
             """)
             stats['by_source'] = {row[0]: row[1] for row in cursor.fetchall()}
@@ -412,7 +412,7 @@ class InteractionManager:
             # Par direction
             cursor.execute("""
                 SELECT direction, COUNT(*) as count
-                FROM interactions
+                FROM engagements
                 WHERE direction IS NOT NULL
                 GROUP BY direction
             """)
@@ -421,7 +421,7 @@ class InteractionManager:
             # Par outcome
             cursor.execute("""
                 SELECT outcome, COUNT(*) as count
-                FROM interactions
+                FROM engagements
                 WHERE outcome IS NOT NULL
                 GROUP BY outcome
             """)
@@ -429,14 +429,14 @@ class InteractionManager:
 
             # Cette semaine
             cursor.execute("""
-                SELECT COUNT(*) FROM interactions
+                SELECT COUNT(*) FROM engagements
                 WHERE interaction_date >= datetime('now', '-7 days')
             """)
             stats['this_week'] = cursor.fetchone()[0]
 
             # Campagnes actives
             cursor.execute("""
-                SELECT COUNT(DISTINCT campaign_id) FROM interactions
+                SELECT COUNT(DISTINCT campaign_id) FROM engagements
                 WHERE campaign_id IS NOT NULL
             """)
             stats['campaigns'] = cursor.fetchone()[0]
@@ -450,16 +450,16 @@ class InteractionManager:
 
             stats = {'campaign_id': campaign_id}
 
-            # Total interactions
+            # Total engagements
             cursor.execute(
-                "SELECT COUNT(*) FROM interactions WHERE campaign_id = ?",
+                "SELECT COUNT(*) FROM engagements WHERE campaign_id = ?",
                 (campaign_id,)
             )
-            stats['total_interactions'] = cursor.fetchone()[0]
+            stats['total_engagements'] = cursor.fetchone()[0]
 
             # Contacts uniques
             cursor.execute(
-                "SELECT COUNT(DISTINCT contact_uuid) FROM interactions WHERE campaign_id = ?",
+                "SELECT COUNT(DISTINCT contact_uuid) FROM engagements WHERE campaign_id = ?",
                 (campaign_id,)
             )
             stats['unique_contacts'] = cursor.fetchone()[0]
@@ -467,7 +467,7 @@ class InteractionManager:
             # Par outcome
             cursor.execute("""
                 SELECT outcome, COUNT(*) as count
-                FROM interactions
+                FROM engagements
                 WHERE campaign_id = ? AND outcome IS NOT NULL
                 GROUP BY outcome
             """, (campaign_id,))
@@ -476,7 +476,7 @@ class InteractionManager:
             # Par étape de séquence
             cursor.execute("""
                 SELECT sequence_step, COUNT(*) as count
-                FROM interactions
+                FROM engagements
                 WHERE campaign_id = ? AND sequence_step IS NOT NULL
                 GROUP BY sequence_step
                 ORDER BY sequence_step
