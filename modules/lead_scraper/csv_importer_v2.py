@@ -303,14 +303,16 @@ class CSVImporterV2:
     et mappe les colonnes vers le schema DB.
     """
 
-    def __init__(self, company_manager=None, contact_manager=None):
+    def __init__(self, company_manager=None, contact_manager=None, engagement_manager=None):
         """
         Args:
             company_manager: Instance de CompanyManagerV2
             contact_manager: Instance de ContactManagerV2
+            engagement_manager: Instance de EngagementManager (optionnel)
         """
         self.company_manager = company_manager
         self.contact_manager = contact_manager
+        self.engagement_manager = engagement_manager
 
     def detect_columns(self, file_path: str) -> Dict[str, Any]:
         """
@@ -329,6 +331,7 @@ class CSVImporterV2:
         """
         result = {
             'columns': [],
+            'all_columns': [],  # Toutes les colonnes pour le mapping manuel
             'suggested_mapping': {},
             'unmapped': [],
             'row_count': 0,
@@ -349,6 +352,7 @@ class CSVImporterV2:
                 # Nettoyer BOM et espaces des noms de colonnes
                 raw_columns = reader.fieldnames or []
                 result['columns'] = [col.strip().lstrip('\ufeff') for col in raw_columns]
+                result['all_columns'] = result['columns'].copy()  # Copie pour mapping manuel
 
                 # Lire quelques lignes pour l'aperçu
                 for i, raw_row in enumerate(reader):
@@ -385,6 +389,7 @@ class CSVImporterV2:
         file_path: str,
         mapping: Dict[str, str] = None,
         source_name: str = None,
+        source_tag: str = None,
         preview_only: bool = False,
         create_companies: bool = True,
         smart_matching: bool = True,
@@ -397,6 +402,7 @@ class CSVImporterV2:
             file_path: Chemin du fichier CSV
             mapping: Mapping personnalisé {'CSV_col': 'table.field'}
             source_name: Nom de la source pour tracking
+            source_tag: Tag business d'origine (ex: "Salon VivaTech 2024")
             preview_only: Si True, ne fait que l'aperçu sans import
             create_companies: Si True, crée les entreprises manquantes
             smart_matching: Si True, utilise le matching intelligent
@@ -409,9 +415,11 @@ class CSVImporterV2:
             'success': True,
             'file': Path(file_path).name,
             'source': source_name or Path(file_path).stem,
+            'source_tag': source_tag,
             'started_at': datetime.now().isoformat(),
             'companies': {'created': 0, 'updated': 0, 'matched': 0},
             'contacts': {'created': 0, 'updated': 0, 'matched': 0},
+            'engagements': {'created': 0},
             'rows_processed': 0,
             'rows_skipped': 0,
             'errors': [],
@@ -446,12 +454,12 @@ class CSVImporterV2:
                             progress_callback(row_num - 1, total_rows)
 
                         result = self._process_row(
-                            row, mapping, report['source'],
+                            row, mapping, report['source'], source_tag,
                             create_companies, smart_matching, preview_only
                         )
 
                         # Agréger les résultats
-                        for entity in ['companies', 'contacts']:
+                        for entity in ['companies', 'contacts', 'engagements']:
                             for action in ['created', 'updated', 'matched']:
                                 report[entity][action] += result.get(entity, {}).get(action, 0)
 
@@ -479,6 +487,7 @@ class CSVImporterV2:
         row: Dict[str, str],
         mapping: Dict[str, str],
         source: str,
+        source_tag: str,
         create_companies: bool,
         smart_matching: bool,
         preview_only: bool
@@ -486,12 +495,14 @@ class CSVImporterV2:
         """Traite une ligne CSV."""
         result = {
             'companies': {'created': 0, 'updated': 0, 'matched': 0},
-            'contacts': {'created': 0, 'updated': 0, 'matched': 0}
+            'contacts': {'created': 0, 'updated': 0, 'matched': 0},
+            'engagements': {'created': 0}
         }
 
         # Extraire les données selon le mapping
         company_data = {}
         contact_data = {}
+        engagement_data = {}
 
         for csv_col, db_field in mapping.items():
             value = row.get(csv_col, '').strip()
@@ -504,6 +515,9 @@ class CSVImporterV2:
             elif db_field.startswith('contacts.'):
                 field_name = db_field.replace('contacts.', '')
                 contact_data[field_name] = self._clean_value(value, field_name)
+            elif db_field.startswith('engagements.'):
+                field_name = db_field.replace('engagements.', '')
+                engagement_data[field_name] = self._clean_value(value, field_name)
 
         if preview_only:
             # En mode preview, on simule juste
@@ -511,12 +525,16 @@ class CSVImporterV2:
                 result['companies']['created'] = 1
             if contact_data.get('email') or contact_data.get('linkedin_url') or contact_data.get('firstname'):
                 result['contacts']['created'] = 1
+            if engagement_data.get('content') or engagement_data.get('interaction_date'):
+                result['engagements']['created'] = 1
             return result
 
         # Importer l'entreprise
         company_uuid = None
         if company_data.get('name') and create_companies:
             company_data['source_file'] = source
+            if source_tag:
+                company_data['source_tag'] = source_tag
 
             if smart_matching:
                 company_uuid, created = self.company_manager.find_or_create(
@@ -532,9 +550,12 @@ class CSVImporterV2:
                 result['companies']['created'] = 1
 
         # Importer le contact
+        contact_uuid = None
         if contact_data.get('email') or contact_data.get('linkedin_url') or \
            (contact_data.get('firstname') and contact_data.get('lastname')):
             contact_data['source_file'] = source
+            if source_tag:
+                contact_data['source_tag'] = source_tag
 
             if smart_matching:
                 contact_uuid, created = self.contact_manager.find_or_create(
@@ -546,10 +567,28 @@ class CSVImporterV2:
                     result['contacts']['matched'] = 1
                     result['contacts']['updated'] = 1
             else:
-                self.contact_manager.create(
+                contact_uuid = self.contact_manager.create(
                     contact_data, company_uuid=company_uuid, source='csv'
                 )
                 result['contacts']['created'] = 1
+
+        # Importer l'engagement (si données présentes et manager disponible)
+        if self.engagement_manager and contact_uuid and \
+           (engagement_data.get('content') or engagement_data.get('interaction_date')):
+            try:
+                eng_data = {
+                    'contact_uuid': contact_uuid,
+                    'company_uuid': company_uuid,
+                    'type': engagement_data.get('type', 'note'),
+                    'channel': 'csv_import',
+                    'content': engagement_data.get('content'),
+                    'interaction_date': engagement_data.get('interaction_date'),
+                    'metadata': {'source_file': source, 'source_tag': source_tag}
+                }
+                self.engagement_manager.create(eng_data, source='csv')
+                result['engagements']['created'] = 1
+            except Exception as e:
+                logger.warning(f"Erreur création engagement: {e}")
 
         return result
 
