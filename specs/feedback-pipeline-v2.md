@@ -96,6 +96,13 @@
 | 1 | Ajouter statut Contact → Lead → Transaction | Haute |
 | 2 | Renommer `interactions` → `engagements` (aligner sur HubSpot) | Moyenne |
 | 3 | Ajouter Tier/ICP sur entreprises (driver de l'enrichissement) | **Critique** |
+| 4 | Ajouter attribution/owner sur entreprises | Haute |
+
+**Détail suggestion #4 : Attribution entreprise**
+- Champ `owner` ou `assigned_to` sur la table `companies`
+- Permet d'attribuer une entreprise à un commercial
+- Utile pour répartir les comptes et tracker qui travaille sur quoi
+- **Action technique** : Ajouter champ `owner_id` ou `owner_email` dans `companies`
 
 **Détail suggestion #3 : Classification Tier / ICP**
 
