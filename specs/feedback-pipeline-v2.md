@@ -75,6 +75,12 @@
 | # | Suggestion | Impact |
 |---|------------|--------|
 | 1 | Ajouter statut Contact → Lead → Transaction | Haute |
+| 2 | Renommer `interactions` → `engagements` (aligner sur HubSpot) | Moyenne |
+
+**Détail suggestion #2 : Terminologie HubSpot**
+- Renommer table `interactions` → `engagements`
+- Aligner le vocabulaire sur HubSpot pour cohérence
+- Types d'engagement : `email`, `call`, `meeting`, `note`, `task`, `message`
 
 **Détail suggestion #1 : Workflow de qualification**
 
