@@ -85,7 +85,7 @@
 
 | # | Description | Repro | Statut |
 |---|-------------|-------|--------|
-| 1 | | | |
+| 1 | Import HubSpot affiche source "manual" au lieu de "hubspot" | Import depuis HubSpot → voir colonne Source | Open |
 
 ---
 
