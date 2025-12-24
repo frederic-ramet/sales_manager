@@ -100,9 +100,16 @@
 
 **Détail suggestion #4 : Attribution entreprise**
 - Champ `owner` ou `assigned_to` sur la table `companies`
-- Permet d'attribuer une entreprise à un commercial
-- Utile pour répartir les comptes et tracker qui travaille sur quoi
-- **Action technique** : Ajouter champ `owner_id` ou `owner_email` dans `companies`
+- Permet d'attribuer une entreprise à un commercial / apporteur d'affaires
+- **Contexte important** : Plusieurs apporteurs d'affaires vont utiliser le système
+- Utile pour :
+  - Répartir les comptes entre commerciaux/partenaires
+  - Tracker qui travaille sur quoi
+  - Calculer les commissions par apporteur
+  - Filtrer la vue par owner
+- **Action technique** :
+  - Ajouter champ `owner_id` ou `owner_email` dans `companies`
+  - Potentiellement une table `users` ou `partners` pour gérer les apporteurs
 
 **Détail suggestion #3 : Classification Tier / ICP**
 
