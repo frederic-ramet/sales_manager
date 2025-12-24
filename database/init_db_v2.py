@@ -84,7 +84,7 @@ def verify_schema():
             cursor = conn.cursor()
 
             # Vérifier les tables principales
-            expected_tables = ['companies', 'contacts', 'interactions', 'homonym_groups', 'sync_metadata', 'import_history']
+            expected_tables = ['companies', 'contacts', 'engagements', 'homonym_groups', 'sync_metadata', 'import_history']
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
             actual_tables = {row[0] for row in cursor.fetchall()}
 
