@@ -196,8 +196,8 @@ with tab_vue:
     with col5:
         limit = st.selectbox("Limite", [25, 50, 100, 200, 500], index=1)
 
-    # Filtres en ligne - Ligne 2 (Tier, Owner, Qualification)
-    col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
+    # Filtres en ligne - Ligne 2 (Tier, Owner, Qualification, Tag)
+    col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
 
     with col1:
         filter_tier = st.selectbox("Tier", ["Tous", "Tier 1", "Tier 2", "Tier 3", "Excluded", "Non classé"], key="vue_filter_tier")
@@ -215,9 +215,21 @@ with tab_vue:
         filter_qualification = st.selectbox("Qualification", ["Tous", "Contact", "Lead", "Transaction"], key="vue_filter_qual")
 
     with col4:
-        filter_size = st.selectbox("Taille", ["Toutes", "1-10", "11-50", "51-200", "201-500", "501+"], key="vue_filter_size")
+        # Collecter les tags uniques (source_tag)
+        all_tags = set()
+        for c in company_manager.list_all(limit=1000):
+            if c.get('source_tag'):
+                all_tags.add(c['source_tag'])
+        for c in contact_manager.list_all(limit=1000):
+            if c.get('source_tag'):
+                all_tags.add(c['source_tag'])
+        tag_options = ["Tous"] + sorted(list(all_tags))
+        filter_tag = st.selectbox("Tag", tag_options, key="vue_filter_tag")
 
     with col5:
+        filter_size = st.selectbox("Taille", ["Toutes", "1-10", "11-50", "51-200", "201-500", "501+"], key="vue_filter_size")
+
+    with col6:
         filter_city = st.text_input("Ville", placeholder="Paris...", key="vue_filter_city")
 
     # Bouton de recherche
@@ -305,6 +317,10 @@ with tab_vue:
                     city_lower = filter_city.lower()
                     companies = [c for c in companies if c.get('hq_city') and city_lower in c['hq_city'].lower()]
 
+                # Appliquer filtre Tag
+                if filter_tag != "Tous":
+                    companies = [c for c in companies if c.get('source_tag') == filter_tag]
+
                 # Limiter le résultat final
                 companies = companies[:limit]
 
@@ -322,6 +338,7 @@ with tab_vue:
                         'SIREN': c.get('siren'),
                         'Ville': c.get('hq_city'),
                         'Taille': c.get('size'),
+                        'Tag': c.get('source_tag', '-'),
                         'Owner': c.get('owner', '-'),
                         'Source': c.get('source'),
                         'Enrichi': '✅' if c.get('enriched_at') else '❌',
@@ -360,6 +377,10 @@ with tab_vue:
                     target_qual = qual_map.get(filter_qualification, "contact")
                     contacts = [c for c in contacts if (c.get('qualification_status') or 'contact') == target_qual]
 
+                # Appliquer filtre Tag
+                if filter_tag != "Tous":
+                    contacts = [c for c in contacts if c.get('source_tag') == filter_tag]
+
                 # Limiter
                 contacts = contacts[:limit]
 
@@ -377,6 +398,7 @@ with tab_vue:
                         'Email': c.get('email'),
                         'Fonction': c.get('job_title'),
                         'Entreprise': c.get('company_uuid', '')[:8] if c.get('company_uuid') else '-',
+                        'Tag': c.get('source_tag', '-'),
                         'Source': c.get('source'),
                         'Synced': '✅' if c.get('synced_to_hubspot') else '❌'
                     } for c in contacts], use_container_width=True, hide_index=True)
