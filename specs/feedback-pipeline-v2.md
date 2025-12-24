@@ -63,14 +63,14 @@
 
 | # | Remarque | Priorité | Statut |
 |---|----------|----------|--------|
-| 1 | Compteur sélection décalé de 1 (affiche 1 au lieu de 2 cochées) | Haute | Open |
-| 2 | Bouton "Enrichir sélection" : 1er clic = rien, 2ème clic = reload page | **Critique** | Open |
-| 3 | Mode batch : "Aucune entreprise à enrichir" alors qu'il y en a en manuel | Haute | Open |
+| 1 | Compteur sélection décalé de 1 (affiche 1 au lieu de 2 cochées) | Haute | ✅ Fixed |
+| 2 | Bouton "Enrichir sélection" : 1er clic = rien, 2ème clic = reload page | **Critique** | ✅ Fixed |
+| 3 | Mode batch : "Aucune entreprise à enrichir" alors qu'il y en a en manuel | Haute | ✅ Fixed |
 
 **Détail bugs Enrich :**
-- Bug #1 : Le compteur de sélection est décalé de -1
-- Bug #2 : Le bouton d'enrichissement ne déclenche pas l'action, comportement incohérent
-- Bug #3 : Le filtre batch automatique ne trouve pas les mêmes entreprises que le mode sélection manuelle
+- Bug #1 : ✅ Corrigé - Restructuré le code pour calculer le count APRÈS les checkboxes
+- Bug #2 : ✅ Corrigé - Le bouton utilise maintenant le bon count, plus de timing issue
+- Bug #3 : ✅ Corrigé - Ajouté diagnostic clair (X avec SIREN, Y sans SIREN) + message explicatif
 
 ### Sync HubSpot
 
@@ -112,21 +112,21 @@
 
 | # | Description | Repro | Statut |
 |---|-------------|-------|--------|
-| 1 | Import HubSpot affiche source "manual" au lieu de "hubspot" | Import depuis HubSpot → voir colonne Source | Open |
-| 2 | Import GetSales affiche source "manual" au lieu de "getsales" | Import depuis GetSales → voir colonne Source | Open |
+| 1 | Import HubSpot affiche source "manual" au lieu de "hubspot" | Import depuis HubSpot → voir colonne Source | ✅ Fixed |
+| 2 | Import GetSales affiche source "manual" au lieu de "getsales" | Import depuis GetSales → voir colonne Source | ✅ Fixed |
 
-**Note bugs #1 et #2** : Le champ `source` n'est pas correctement renseigné lors des imports. Tous les imports semblent mettre "manual" par défaut.
+**Note bugs #1 et #2** : ✅ Corrigé - Les méthodes create() des imports passent maintenant explicitement le paramètre `source='hubspot'` ou `source='getsales'`.
 
 ---
 
 ## Suggestions d'amélioration
 
-| # | Suggestion | Impact |
-|---|------------|--------|
-| 1 | Ajouter statut Contact → Lead → Transaction | Haute |
-| 2 | Renommer `interactions` → `engagements` (aligner sur HubSpot) | Moyenne |
-| 3 | Ajouter Tier/ICP sur entreprises (driver de l'enrichissement) | **Critique** |
-| 4 | Ajouter attribution/owner sur entreprises | Haute |
+| # | Suggestion | Impact | Statut |
+|---|------------|--------|--------|
+| 1 | Ajouter statut Contact → Lead → Transaction | Haute | ✅ DB Ready |
+| 2 | Renommer `interactions` → `engagements` (aligner sur HubSpot) | Moyenne | ✅ Done |
+| 3 | Ajouter Tier/ICP sur entreprises (driver de l'enrichissement) | **Critique** | ✅ DB Ready |
+| 4 | Ajouter attribution/owner sur entreprises | Haute | ✅ DB Ready |
 
 **Détail suggestion #4 : Attribution entreprise**
 - Champ `owner` ou `assigned_to` sur la table `companies`
