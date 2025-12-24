@@ -1104,7 +1104,10 @@ with tab_enrich:
             companies = companies[:enrich_display_limit]
 
             st.session_state['enrich_companies'] = companies
-            st.session_state['enrich_selected'] = set()
+            # Reset checkbox states
+            for key in list(st.session_state.keys()):
+                if key.startswith('enrich_company_'):
+                    del st.session_state[key]
 
         # Afficher les entreprises avec checkboxes
         if 'enrich_companies' in st.session_state and st.session_state['enrich_companies']:
@@ -1112,30 +1115,69 @@ with tab_enrich:
 
             st.write(f"**{len(companies)}** entreprises affichées")
 
-            # Actions groupées
+            # ÉTAPE 1: D'abord afficher les checkboxes pour capturer leur état
+            st.divider()
+
+            # Liste des entreprises avec checkboxes - AVANT les actions
+            checkbox_states = {}
+            for i, company in enumerate(companies):
+                col1, col2, col3, col4, col5 = st.columns([0.5, 3, 2, 2, 1])
+
+                with col1:
+                    # Lire l'état précédent du checkbox depuis session_state
+                    checkbox_key = f"enrich_company_{i}"
+                    is_checked = st.checkbox("", key=checkbox_key)
+                    checkbox_states[i] = is_checked
+
+                with col2:
+                    st.write(f"**{company.get('name', 'N/A')}**")
+
+                with col3:
+                    siren = company.get('siren', '-')
+                    st.write(f"SIREN: {siren}" if siren else "⚠️ Pas de SIREN")
+
+                with col4:
+                    st.write(company.get('size', '-'))
+
+                with col5:
+                    if company.get('enriched_at'):
+                        st.write("✅")
+                    else:
+                        st.write("❌")
+
+            # ÉTAPE 2: Calculer le compte APRÈS les checkboxes
+            selected_indices = [i for i, checked in checkbox_states.items() if checked]
+            selected_count = len(selected_indices)
+
+            st.divider()
+
+            # ÉTAPE 3: Afficher les actions avec le bon compte
             col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
 
             with col1:
-                select_all_enrich = st.checkbox("☑️ Tout sélectionner", key="select_all_enrich")
-                if select_all_enrich:
-                    st.session_state['enrich_selected'] = set(range(len(companies)))
+                if st.button("☑️ Tout sélectionner", key="select_all_enrich_btn"):
+                    # Sélectionner tous - mettre tous les checkboxes à True
+                    for i in range(len(companies)):
+                        st.session_state[f"enrich_company_{i}"] = True
+                    st.rerun()
 
             with col2:
-                selected_count = len(st.session_state.get('enrich_selected', set()))
                 st.write(f"**{selected_count}** sélectionnées")
 
             with col3:
                 if st.button("🗑️ Effacer sélection"):
-                    st.session_state['enrich_selected'] = set()
+                    for i in range(len(companies)):
+                        st.session_state[f"enrich_company_{i}"] = False
                     st.rerun()
 
             with col4:
-                if st.button(f"🔍 ENRICHIR SÉLECTION ({selected_count})", type="primary", disabled=selected_count == 0):
+                enrich_btn_disabled = selected_count == 0
+                if st.button(f"🔍 ENRICHIR ({selected_count})", type="primary", disabled=enrich_btn_disabled):
                     if source == 'pappers' and not pappers_key:
                         st.error("❌ PAPPERS_API_KEY requise pour Pappers")
                     else:
                         # Récupérer les entreprises sélectionnées
-                        selected_companies = [companies[i] for i in st.session_state['enrich_selected']]
+                        selected_companies = [companies[i] for i in selected_indices]
 
                         with st.spinner(f"Enrichissement via {source.upper()} en cours..."):
                             progress_bar = st.progress(0)
@@ -1145,9 +1187,9 @@ with tab_enrich:
                             errors = []
                             contacts_added = 0
 
-                            for i, company in enumerate(selected_companies):
-                                progress_bar.progress((i + 1) / len(selected_companies))
-                                status_text.text(f"Traitement: {company.get('name', 'N/A')} ({i+1}/{len(selected_companies)})")
+                            for idx, company in enumerate(selected_companies):
+                                progress_bar.progress((idx + 1) / len(selected_companies))
+                                status_text.text(f"Traitement: {company.get('name', 'N/A')} ({idx+1}/{len(selected_companies)})")
 
                                 siren = company.get('siren')
                                 if not siren:
@@ -1178,39 +1220,10 @@ with tab_enrich:
 
                         # Nettoyer la session
                         del st.session_state['enrich_companies']
-                        del st.session_state['enrich_selected']
+                        for key in list(st.session_state.keys()):
+                            if key.startswith('enrich_company_'):
+                                del st.session_state[key]
                         st.rerun()
-
-            st.divider()
-
-            # Liste des entreprises avec checkboxes
-            for i, company in enumerate(companies):
-                col1, col2, col3, col4, col5 = st.columns([0.5, 3, 2, 2, 1])
-
-                with col1:
-                    checked = i in st.session_state.get('enrich_selected', set())
-                    if st.checkbox("", key=f"enrich_company_{i}", value=checked or select_all_enrich):
-                        if 'enrich_selected' not in st.session_state:
-                            st.session_state['enrich_selected'] = set()
-                        st.session_state['enrich_selected'].add(i)
-                    elif i in st.session_state.get('enrich_selected', set()):
-                        st.session_state['enrich_selected'].discard(i)
-
-                with col2:
-                    st.write(f"**{company.get('name', 'N/A')}**")
-
-                with col3:
-                    siren = company.get('siren', '-')
-                    st.write(f"SIREN: {siren}" if siren else "⚠️ Pas de SIREN")
-
-                with col4:
-                    st.write(company.get('size', '-'))
-
-                with col5:
-                    if company.get('enriched_at'):
-                        st.write("✅")
-                    else:
-                        st.write("❌")
 
         elif 'enrich_companies' in st.session_state:
             st.info("Aucune entreprise ne correspond aux filtres")
@@ -1235,16 +1248,35 @@ with tab_enrich:
 
         # Aperçu des entreprises à enrichir
         with st.expander("👁 Aperçu des entreprises à enrichir"):
-            preview_companies = enricher._get_companies_to_enrich(min(enrich_limit, 20), only_unenriched)
-            if preview_companies:
+            # Récupérer toutes les entreprises pour diagnostic
+            all_companies = company_manager.list_all(status='active', limit=min(enrich_limit * 2, 200))
+
+            # Filtrer par statut enrichissement
+            if only_unenriched:
+                filtered_companies = [c for c in all_companies if not c.get('enriched_at')]
+            else:
+                filtered_companies = all_companies
+
+            # Compter celles avec SIREN
+            with_siren = [c for c in filtered_companies if c.get('siren')]
+            without_siren = len(filtered_companies) - len(with_siren)
+
+            if with_siren:
+                st.write(f"**{len(with_siren)}** entreprises avec SIREN (enrichissables)")
+                if without_siren > 0:
+                    st.caption(f"⚠️ {without_siren} entreprises sans SIREN (non enrichissables)")
+
                 st.dataframe([{
                     'Nom': c.get('name'),
                     'SIREN': c.get('siren'),
                     'Taille': c.get('size'),
                     'Enrichi': '✅' if c.get('enriched_at') else '❌'
-                } for c in preview_companies], use_container_width=True)
+                } for c in with_siren[:20]], use_container_width=True)
+            elif filtered_companies:
+                st.warning(f"⚠️ {len(filtered_companies)} entreprises trouvées mais **aucune n'a de SIREN**")
+                st.info("💡 Le mode batch nécessite un SIREN pour enrichir. Utilisez le mode manuel pour voir toutes les entreprises.")
             else:
-                st.info("Aucune entreprise à enrichir (vérifiez les filtres)")
+                st.info("Aucune entreprise à enrichir (toutes déjà enrichies ou aucune importée)")
 
         # Bouton enrichissement
         if st.button("🔍 ENRICHIR", type="primary", use_container_width=True):
