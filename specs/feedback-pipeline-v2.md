@@ -14,6 +14,13 @@
 |---|----------|----------|--------|
 | 1 | Import crée entreprises + contacts mais PAS les interactions/événements | Moyenne | Open |
 | 2 | Permettre de tagger l'origine/source lors de l'import | Haute | Open |
+| 3 | Mapping manuel des colonnes manquant (existait en V1) | **Critique** | Open |
+
+**Détail remarque #3 :**
+- En V1 : l'utilisateur pouvait mapper manuellement chaque colonne CSV vers un champ DB
+- En V2 : mapping uniquement automatique, pas de possibilité de corriger/ajouter
+- Impact : perte de données si colonnes non reconnues (ex: CSV Apollo avec "Work Direct Phone", "# Employees", "Technologies", etc.)
+- **Action** : Restaurer l'UI de mapping manuel comme en V1
 
 **Détail remarque #2 :**
 - À l'import, pouvoir spécifier un tag d'origine (ex: "Salon VivaTech 2024", "LinkedIn Ads", "Referral Partner X")
