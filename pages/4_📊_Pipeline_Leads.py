@@ -344,6 +344,22 @@ with tab_vue:
                         'Enrichi': '✅' if c.get('enriched_at') else '❌',
                         'Synced': '✅' if c.get('synced_to_hubspot') else '❌'
                     } for c in companies], use_container_width=True, hide_index=True)
+
+                    # Sélection pour voir la fiche
+                    st.session_state['_last_companies_search'] = companies
+                    company_names = ["-- Sélectionner pour voir la fiche --"] + [
+                        f"{c.get('name')} ({c.get('siren', 'N/A')})" for c in companies
+                    ]
+                    selected_idx = st.selectbox(
+                        "👁️ Voir fiche entreprise",
+                        range(len(company_names)),
+                        format_func=lambda x: company_names[x],
+                        key="select_company_for_fiche"
+                    )
+                    if selected_idx > 0:
+                        selected_company = companies[selected_idx - 1]
+                        st.session_state['display_company_fiche'] = True
+                        st.session_state['selected_company_uuid'] = selected_company['uuid']
                 else:
                     st.info("Aucune entreprise trouvée avec ces filtres")
 
@@ -422,10 +438,18 @@ with tab_vue:
         if st.button("🔍 Afficher fiche", key="btn_show_company_detail"):
             st.session_state['display_company_fiche'] = True
 
-    if st.session_state.get('display_company_fiche') and company_detail_search:
-        # Chercher l'entreprise
-        found_company = None
+    # Chercher l'entreprise (depuis recherche ou sélection du tableau)
+    found_company = None
 
+    # Si sélection depuis le tableau
+    if st.session_state.get('selected_company_uuid'):
+        found_company = company_manager.get_by_uuid(st.session_state['selected_company_uuid'])
+        # Réinitialiser après affichage
+        if found_company:
+            st.session_state['display_company_fiche'] = True
+
+    # Sinon, recherche manuelle
+    if not found_company and st.session_state.get('display_company_fiche') and company_detail_search:
         # Par SIREN
         found_company = company_manager.find_by_siren(company_detail_search)
 
@@ -440,153 +464,152 @@ with tab_vue:
             except:
                 pass
 
-        if found_company:
-            # Helper pour badge tier
-            def get_tier_display(tier):
-                badges = {
-                    'tier_1': '🟢 Tier 1',
-                    'tier_2': '🟡 Tier 2',
-                    'tier_3': '🟠 Tier 3',
-                    'excluded': '⚫ Excluded',
-                    'unclassified': '⚪ Non classé'
-                }
-                return badges.get(tier or 'unclassified', '⚪ Non classé')
+    if found_company:
+        # Helper pour badge tier
+        def get_tier_display(tier):
+            badges = {
+                'tier_1': '🟢 Tier 1',
+                'tier_2': '🟡 Tier 2',
+                'tier_3': '🟠 Tier 3',
+                'excluded': '⚫ Excluded',
+                'unclassified': '⚪ Non classé'
+            }
+            return badges.get(tier or 'unclassified', '⚪ Non classé')
 
-            # Header
-            st.markdown(f"## 🏢 {found_company.get('name', 'N/A')}")
+        # Header
+        st.markdown(f"## 🏢 {found_company.get('name', 'N/A')}")
 
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write(f"**Tier:** {get_tier_display(found_company.get('tier'))}")
+        with col2:
+            st.write(f"**Owner:** {found_company.get('owner', 'Non assigné')}")
+        with col3:
+            st.write(f"**Source:** {found_company.get('source', '-')}")
+
+        # Sous-onglets
+        fiche_tab1, fiche_tab2, fiche_tab3, fiche_tab4 = st.tabs([
+            "📋 Infos",
+            "👤 Contacts",
+            "💬 Engagements",
+            "⚙️ Actions"
+        ])
+
+        with fiche_tab1:
+            st.markdown("#### Informations générales")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.write(f"**SIREN:** {found_company.get('siren', '-')}")
+                st.write(f"**Domaine:** {found_company.get('domain', '-')}")
+                st.write(f"**Taille:** {found_company.get('size', '-')}")
+                st.write(f"**Secteur:** {found_company.get('industry', '-')}")
+                st.write(f"**CA:** {found_company.get('revenue', '-')}")
+
+            with col2:
+                st.write(f"**Ville:** {found_company.get('hq_city', '-')}")
+                st.write(f"**Pays:** {found_company.get('hq_country', '-')}")
+                st.write(f"**Forme juridique:** {found_company.get('legal_form', '-')}")
+                st.write(f"**Code APE:** {found_company.get('ape_code', '-')}")
+                st.write(f"**Website:** {found_company.get('website', '-')}")
+
+            st.markdown("#### Statuts")
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.write(f"**Tier:** {get_tier_display(found_company.get('tier'))}")
+                enriched = "✅" if found_company.get('enriched_at') else "❌"
+                st.write(f"**Enrichi:** {enriched}")
             with col2:
-                st.write(f"**Owner:** {found_company.get('owner', 'Non assigné')}")
+                synced = "✅" if found_company.get('synced_to_hubspot') else "❌"
+                st.write(f"**Synced HubSpot:** {synced}")
             with col3:
-                st.write(f"**Source:** {found_company.get('source', '-')}")
+                st.write(f"**Source tag:** {found_company.get('source_tag', '-')}")
 
-            # Sous-onglets
-            fiche_tab1, fiche_tab2, fiche_tab3, fiche_tab4 = st.tabs([
-                "📋 Infos",
-                "👤 Contacts",
-                "💬 Engagements",
-                "⚙️ Actions"
-            ])
+        with fiche_tab2:
+            st.markdown("#### Contacts liés")
+            # Récupérer les contacts de cette entreprise
+            company_contacts = contact_manager.list_all(company_uuid=found_company['uuid'])
 
-            with fiche_tab1:
-                st.markdown("#### Informations générales")
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.write(f"**SIREN:** {found_company.get('siren', '-')}")
-                    st.write(f"**Domaine:** {found_company.get('domain', '-')}")
-                    st.write(f"**Taille:** {found_company.get('size', '-')}")
-                    st.write(f"**Secteur:** {found_company.get('industry', '-')}")
-                    st.write(f"**CA:** {found_company.get('revenue', '-')}")
-
-                with col2:
-                    st.write(f"**Ville:** {found_company.get('hq_city', '-')}")
-                    st.write(f"**Pays:** {found_company.get('hq_country', '-')}")
-                    st.write(f"**Forme juridique:** {found_company.get('legal_form', '-')}")
-                    st.write(f"**Code APE:** {found_company.get('ape_code', '-')}")
-                    st.write(f"**Website:** {found_company.get('website', '-')}")
-
-                st.markdown("#### Statuts")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    enriched = "✅" if found_company.get('enriched_at') else "❌"
-                    st.write(f"**Enrichi:** {enriched}")
-                with col2:
-                    synced = "✅" if found_company.get('synced_to_hubspot') else "❌"
-                    st.write(f"**Synced HubSpot:** {synced}")
-                with col3:
-                    st.write(f"**Source tag:** {found_company.get('source_tag', '-')}")
-
-            with fiche_tab2:
-                st.markdown("#### Contacts liés")
-                # Récupérer les contacts de cette entreprise
-                company_contacts = contact_manager.list_by_company(found_company['uuid'])
-
-                if company_contacts:
-                    for contact in company_contacts:
-                        qual_badge = {'contact': '⚪', 'lead': '🟡', 'transaction': '🟢'}.get(
-                            contact.get('qualification_status', 'contact'), '⚪'
-                        )
-                        name = f"{contact.get('firstname', '')} {contact.get('lastname', '')}".strip()
-                        col1, col2, col3, col4 = st.columns([0.5, 3, 2, 2])
-                        with col1:
-                            st.write(qual_badge)
-                        with col2:
-                            st.write(f"**{name}**")
-                        with col3:
-                            st.write(contact.get('email', '-'))
-                        with col4:
-                            st.write(contact.get('job_title', '-'))
-                else:
-                    st.info("Aucun contact lié à cette entreprise")
-
-            with fiche_tab3:
-                st.markdown("#### Historique des engagements")
-                # Récupérer les engagements
-                company_engagements = engagement_manager.list_by_company(found_company['uuid'], limit=20)
-
-                if company_engagements:
-                    for eng in company_engagements:
-                        eng_type = eng.get('type', 'note')
-                        eng_date = eng.get('interaction_date', eng.get('created_at', ''))[:10] if eng.get('interaction_date') or eng.get('created_at') else '-'
-                        eng_icon = {'email': '📧', 'call': '📞', 'meeting': '📅', 'linkedin_message_sent': '💼', 'linkedin_reply_received': '📥', 'note': '📝'}.get(eng_type, '📋')
-
-                        col1, col2, col3 = st.columns([1, 1, 4])
-                        with col1:
-                            st.write(f"{eng_icon} {eng_date}")
-                        with col2:
-                            st.write(eng_type)
-                        with col3:
-                            content = eng.get('content', '')
-                            st.write(content[:100] + '...' if len(content) > 100 else content if content else '-')
-                else:
-                    st.info("Aucun engagement enregistré")
-
-            with fiche_tab4:
-                st.markdown("#### Actions rapides")
-
-                col1, col2, col3, col4 = st.columns(4)
-
-                with col1:
-                    new_tier = st.selectbox(
-                        "Changer Tier",
-                        ["-- Sélectionner --", "tier_1", "tier_2", "tier_3", "excluded"],
-                        key="fiche_change_tier"
+            if company_contacts:
+                for contact in company_contacts:
+                    qual_badge = {'contact': '⚪', 'lead': '🟡', 'transaction': '🟢'}.get(
+                        contact.get('qualification_status', 'contact'), '⚪'
                     )
-                    if st.button("Appliquer Tier", key="fiche_apply_tier"):
-                        if new_tier != "-- Sélectionner --":
-                            company_manager.update(found_company['uuid'], {'tier': new_tier})
-                            st.success(f"✅ Tier changé en {new_tier}")
-                            st.rerun()
+                    name = f"{contact.get('firstname', '')} {contact.get('lastname', '')}".strip()
+                    col1, col2, col3, col4 = st.columns([0.5, 3, 2, 2])
+                    with col1:
+                        st.write(qual_badge)
+                    with col2:
+                        st.write(f"**{name}**")
+                    with col3:
+                        st.write(contact.get('email', '-'))
+                    with col4:
+                        st.write(contact.get('job_title', '-'))
+            else:
+                st.info("Aucun contact lié à cette entreprise")
 
-                with col2:
-                    new_owner = st.text_input("Assigner Owner", key="fiche_new_owner")
-                    if st.button("Appliquer Owner", key="fiche_apply_owner"):
-                        if new_owner:
-                            company_manager.update(found_company['uuid'], {'owner': new_owner})
-                            st.success(f"✅ Owner assigné: {new_owner}")
-                            st.rerun()
+        with fiche_tab3:
+            st.markdown("#### Historique des engagements")
+            # Récupérer les engagements
+            company_engagements = engagement_manager.list_by_company(found_company['uuid'], limit=20)
 
-                with col3:
-                    if st.button("🔍 Enrichir", key="fiche_enrich"):
-                        if found_company.get('siren'):
-                            result = enricher.enrich_company(found_company['uuid'], source='pappers')
-                            if result.get('success'):
-                                st.success("✅ Entreprise enrichie!")
-                            else:
-                                st.error(f"❌ {result.get('error', 'Erreur')}")
+            if company_engagements:
+                for eng in company_engagements:
+                    eng_type = eng.get('type', 'note')
+                    eng_date = eng.get('interaction_date', eng.get('created_at', ''))[:10] if eng.get('interaction_date') or eng.get('created_at') else '-'
+                    eng_icon = {'email': '📧', 'call': '📞', 'meeting': '📅', 'linkedin_message_sent': '💼', 'linkedin_reply_received': '📥', 'note': '📝'}.get(eng_type, '📋')
+
+                    col1, col2, col3 = st.columns([1, 1, 4])
+                    with col1:
+                        st.write(f"{eng_icon} {eng_date}")
+                    with col2:
+                        st.write(eng_type)
+                    with col3:
+                        content = eng.get('content', '')
+                        st.write(content[:100] + '...' if len(content) > 100 else content if content else '-')
+            else:
+                st.info("Aucun engagement enregistré")
+
+        with fiche_tab4:
+            st.markdown("#### Actions rapides")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                new_tier = st.selectbox(
+                    "Changer Tier",
+                    ["-- Sélectionner --", "tier_1", "tier_2", "tier_3", "excluded"],
+                    key="fiche_change_tier"
+                )
+                if st.button("Appliquer Tier", key="fiche_apply_tier"):
+                    if new_tier != "-- Sélectionner --":
+                        company_manager.update(found_company['uuid'], {'tier': new_tier})
+                        st.success(f"✅ Tier changé en {new_tier}")
+                        st.rerun()
+
+            with col2:
+                new_owner = st.text_input("Assigner Owner", key="fiche_new_owner")
+                if st.button("Appliquer Owner", key="fiche_apply_owner"):
+                    if new_owner:
+                        company_manager.update(found_company['uuid'], {'owner': new_owner})
+                        st.success(f"✅ Owner assigné: {new_owner}")
+                        st.rerun()
+
+            with col3:
+                if st.button("🔍 Enrichir", key="fiche_enrich"):
+                    if found_company.get('siren'):
+                        result = enricher.enrich_company(found_company['uuid'], source='pappers')
+                        if result.get('success'):
+                            st.success("✅ Entreprise enrichie!")
                         else:
-                            st.warning("⚠️ SIREN requis pour l'enrichissement")
+                            st.error(f"❌ {result.get('error', 'Erreur')}")
+                    else:
+                        st.warning("⚠️ SIREN requis pour l'enrichissement")
 
-                with col4:
-                    if st.button("🔄 Sync HubSpot", key="fiche_sync"):
-                        st.info("Sync individuelle non implémentée - utilisez l'onglet Sync")
-
-        else:
-            st.warning("❌ Aucune entreprise trouvée avec cette recherche")
+            with col4:
+                if st.button("🔄 Sync HubSpot", key="fiche_sync"):
+                    st.info("Sync individuelle non implémentée - utilisez l'onglet Sync")
+    elif st.session_state.get('display_company_fiche') or st.session_state.get('selected_company_uuid'):
+        st.warning("❌ Aucune entreprise trouvée avec cette recherche")
 
 # =============================================================================
 # TAB 2: IMPORT

@@ -306,6 +306,25 @@ class EngagementManager:
 
             return [dict(row) for row in cursor.fetchall()]
 
+    def list_by_company(
+        self,
+        company_uuid: str,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Liste les engagements de tous les contacts d'une entreprise."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT e.*, c.firstname, c.lastname, c.email
+                FROM engagements e
+                JOIN contacts c ON e.contact_uuid = c.uuid
+                WHERE c.company_uuid = ?
+                ORDER BY e.interaction_date DESC
+                LIMIT ?
+            """, (company_uuid, limit))
+            return [dict(row) for row in cursor.fetchall()]
+
     def list_by_campaign(
         self,
         campaign_id: str,
