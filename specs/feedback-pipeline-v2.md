@@ -76,6 +76,49 @@
 |---|------------|--------|
 | 1 | Ajouter statut Contact → Lead → Transaction | Haute |
 | 2 | Renommer `interactions` → `engagements` (aligner sur HubSpot) | Moyenne |
+| 3 | Ajouter Tier/ICP sur entreprises (driver de l'enrichissement) | **Critique** |
+
+**Détail suggestion #3 : Classification Tier / ICP**
+
+### Concept clé
+Le **Tier** est le driver principal de toute la stratégie :
+- On enrichit pour **mieux cibler**
+- On enrichit pour **mieux qualifier**
+- On enrichit pour **mieux investir** dans les opérations de contact
+
+### Hiérarchie
+
+```
+ICP (Ideal Customer Profile)     ← Définition des critères cibles
+       ↓
+   Tier / Classe                 ← Classification priorité entreprise
+       ↓
+    Segment                      ← Regroupement pour campagnes
+       ↓
+    Contact                      ← Personnes à contacter
+```
+
+### Valeurs proposées
+
+| Tier | Description | Action enrichissement |
+|------|-------------|----------------------|
+| `tier_1` | Cible idéale, priorité max | Enrichissement complet + manuel |
+| `tier_2` | Bonne cible, priorité moyenne | Enrichissement automatique |
+| `tier_3` | Opportuniste | Enrichissement minimal |
+| `excluded` | Hors cible (concurrent, trop petit...) | Aucun enrichissement |
+
+### Impact sur le pipeline
+
+| Étape | Utilisation du Tier |
+|-------|---------------------|
+| **Import** | Pré-classification si critères disponibles |
+| **Enrich** | Priorisation : Tier 1 d'abord, profondeur selon tier |
+| **Clean** | Dédup prioritaire sur Tier 1 |
+| **Sync** | Push HubSpot : Tier 1-2 uniquement |
+
+**Action technique** :
+- Ajouter champ `tier` dans table `companies` : `tier_1`, `tier_2`, `tier_3`, `excluded`, `unclassified`
+- UI de classification manuelle + règles auto (taille, secteur, localisation)
 
 **Détail suggestion #2 : Terminologie HubSpot**
 - Renommer table `interactions` → `engagements`
