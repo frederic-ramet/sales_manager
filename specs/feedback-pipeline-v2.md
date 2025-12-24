@@ -69,7 +69,20 @@
 
 | # | Remarque | Priorité | Statut |
 |---|----------|----------|--------|
-| 1 | | | |
+| 1 | Interactions/engagements non affichés dans l'analyse | Haute | Open |
+| 2 | Permettre sync séparée : Entreprises / Contacts / Engagements | Moyenne | Open |
+| 3 | Ajouter indicateurs de qualité avant sync (éviter données non qualifiées dans HubSpot) | **Critique** | Open |
+
+**Détail remarques Sync :**
+- Bug #1 : L'analyse ne montre que Entreprises et Contacts, pas les Engagements
+- Suggestion #2 : Pouvoir synchroniser un seul type d'entité à la fois (ex: que les entreprises)
+- Suggestion #3 : Alertes qualité avant push :
+  - Entreprise sans SIREN
+  - Contact sans email
+  - Contact sans entreprise liée
+  - Données non enrichies
+  - Tier non défini
+  - Etc.
 
 ### Navigation / UX
 
