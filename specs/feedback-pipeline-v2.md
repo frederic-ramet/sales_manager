@@ -86,6 +86,9 @@
 | # | Description | Repro | Statut |
 |---|-------------|-------|--------|
 | 1 | Import HubSpot affiche source "manual" au lieu de "hubspot" | Import depuis HubSpot → voir colonne Source | Open |
+| 2 | Import GetSales affiche source "manual" au lieu de "getsales" | Import depuis GetSales → voir colonne Source | Open |
+
+**Note bugs #1 et #2** : Le champ `source` n'est pas correctement renseigné lors des imports. Tous les imports semblent mettre "manual" par défaut.
 
 ---
 
