@@ -12,7 +12,14 @@
 
 | # | Remarque | Priorité | Statut |
 |---|----------|----------|--------|
-| 1 | | | |
+| 1 | Import crée entreprises + contacts mais PAS les interactions/événements | Moyenne | Open |
+
+**Détail remarque #1 :**
+- Les entreprises sont créées ✅
+- Les contacts sont créés ✅
+- Les interactions ne sont pas créées ❌
+- **Cause probable** : Le CSV contient des colonnes comme "Date envoi message", "Commentaire" qui ne sont pas mappées vers la table `interactions`
+- **Action suggérée** : Ajouter mapping CSV → interactions (type, date, contenu)
 
 ### Vue Dashboard
 
